@@ -1,0 +1,133 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html, body, #root {
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  background-color: #0c0e12;
+  color: #e6edf3;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #21262d;
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #30363d;
+}
+
+/* Titlebar drag region */
+.titlebar-drag {
+  -webkit-app-region: drag;
+}
+
+/* Non-drag buttons in titlebar */
+.titlebar-btn {
+  -webkit-app-region: no-drag;
+}
+
+/* Email list item hover */
+.email-item {
+  position: relative;
+  transition: background-color 0.15s ease;
+}
+
+.email-item:hover {
+  background-color: #1f2937;
+}
+
+.email-item:hover .opacity-0 {
+  opacity: 1;
+}
+
+.email-item.active {
+  background-color: #161b22;
+  border-left: 3px solid #4c8dff;
+}
+
+/* Folder item */
+.folder-item {
+  transition: background-color 0.15s ease;
+}
+
+.folder-item:hover {
+  background-color: #1f2937;
+}
+
+.folder-item.active {
+  background-color: #161b22;
+  border-left: 3px solid #4c8dff;
+}
+
+/* Button styles */
+.btn-primary {
+  background: linear-gradient(135deg, #4c8dff 0%, #3b6fe0 100%);
+  color: white;
+  padding: 8px 16px;
+  border-radius: 6px;
+  font-weight: 500;
+  transition: opacity 0.15s ease;
+}
+
+.btn-primary:hover {
+  opacity: 0.9;
+}
+
+.btn-secondary {
+  background: #1f2937;
+  color: #e6edf3;
+  padding: 8px 16px;
+  border-radius: 6px;
+  font-weight: 500;
+  border: 1px solid #21262d;
+  transition: background-color 0.15s ease;
+}
+
+.btn-secondary:hover {
+  background: #30363d;
+}
+
+/* Badge for unread count */
+.badge-unread {
+  background: #4c8dff;
+  color: white;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 6px;
+  border-radius: 10px;
+  min-width: 20px;
+  text-align: center;
+}
+
+/* Animation */
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.animate-spin {
+  animation: spin 1s linear infinite;
+}
