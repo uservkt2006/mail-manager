@@ -27,7 +27,7 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], all
 # SQLite database path (MM_DB_PATH lets tests use an isolated DB)
 DB_PATH = os.environ.get("MM_DB_PATH") or os.path.expanduser("~/.mail_manager/mail_manager.db")
 KEY_PATH = os.path.expanduser("~/.mail_manager/key")
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 CATEGORIES = ["Work", "Personal", "Finance", "Urgent", "Travel", "Other"]
 CATEGORY_COLORS = {"Work": "#4c8dff", "Personal": "#22c55e", "Finance": "#f59e0b",
@@ -202,6 +202,11 @@ CREATE INDEX IF NOT EXISTS idx_msg_thread ON messages(thread_id);
 CREATE INDEX IF NOT EXISTS idx_msg_read ON messages(is_read);
 CREATE INDEX IF NOT EXISTS idx_att_msg ON attachments(message_id);
 CREATE INDEX IF NOT EXISTS idx_task_user ON tasks(user_id);
+CREATE TABLE IF NOT EXISTS user_settings (
+    user_id INTEGER PRIMARY KEY REFERENCES users(id),
+    json TEXT NOT NULL DEFAULT '{}',
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
 '''
 
 
@@ -219,8 +224,11 @@ def init_db():
         ver = conn.execute("PRAGMA user_version").fetchone()[0]
         if ver >= SCHEMA_VERSION:
             return
-        # v3: fresh rebuild (back up first)
-        if ver > 0:
+        # v4: additive migration — SCHEMA is CREATE IF NOT EXISTS, safe on live data.
+        # Destructive rebuild only if the DB predates v3 (missing 'users' table).
+        has_users = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='users'").fetchone()
+        if ver > 0 and not has_users:
             conn.close()
             import shutil
             shutil.copy2(DB_PATH, DB_PATH + f".v{ver}.bak")
@@ -230,9 +238,8 @@ def init_db():
         conn.executescript(SCHEMA)
         conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
         # MM_DEMO=0 -> clean first-run (wizard), no seeded demo accounts
-        if os.environ.get("MM_DEMO", "1") == "0":
-            return
-        seed(conn)
+        if not has_users and os.environ.get("MM_DEMO", "1") != "0":
+            seed(conn)
 
 
 def get_or_create_folder(conn, user_id, ftype, name=None, parent_id=None):
@@ -771,6 +778,43 @@ async def logout(user: dict = Depends(current_user), x_auth_token: str = Header(
 @app.get("/api/auth/me")
 async def me(user: dict = Depends(current_user)):
     return {"user": user}
+
+
+# ─── user settings ────────────────────────────────────────────────────
+class SettingsReq(BaseModel):
+    values: dict
+
+
+DEFAULT_SETTINGS = {"theme": "dark", "density": "comfortable", "reading_pane": "right",
+                    "signature": "", "autosync": False, "sync_interval_min": 5,
+                    "default_reply_all": False}
+
+
+def get_settings(user_id: int) -> dict:
+    with get_db() as conn:
+        row = conn.execute("SELECT json FROM user_settings WHERE user_id=?", (user_id,)).fetchone()
+    try:
+        stored = json.loads(row["json"]) if row else {}
+    except json.JSONDecodeError:
+        stored = {}
+    return {**DEFAULT_SETTINGS, **stored}
+
+
+@app.get("/api/settings")
+async def api_settings_get(user: dict = Depends(current_user)):
+    return {"settings": get_settings(user["id"])}
+
+
+@app.put("/api/settings")
+async def api_settings_put(req: SettingsReq, user: dict = Depends(current_user)):
+    allowed = {k: v for k, v in req.values.items() if k in DEFAULT_SETTINGS}
+    merged = {**get_settings(user["id"]), **allowed}
+    with get_db() as conn:
+        conn.execute(
+            """INSERT INTO user_settings (user_id, json, updated_at) VALUES (?,?,CURRENT_TIMESTAMP)
+               ON CONFLICT(user_id) DO UPDATE SET json=excluded.json, updated_at=CURRENT_TIMESTAMP""",
+            (user["id"], json.dumps(merged, ensure_ascii=False)))
+    return {"success": True, "settings": merged}
 
 
 # ─── folders ──────────────────────────────────────────────────────────
