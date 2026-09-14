@@ -64,12 +64,12 @@ export default function SetupWizard({ onDone }) {
       <div className="w-[560px] max-w-[94vw]">
         {/* brand */}
         <div className="flex items-center gap-3 mb-6 justify-center">
-          <div className="w-11 h-11 rounded-xl bg-gradient-to-br from-primary to-blue-600 flex items-center justify-center shadow-lg shadow-primary/20">
-            <Mail size={22} className="text-white" />
+          <div className="w-11 h-11 rounded-xl bg-gradient-to-br from-primary to-blue-600 flex items-center justify-center shadow-lg shadow-[0_8px_24px_rgba(76,141,255,0.25)]">
+            <Mail size={22} className="text-ink-strong" />
           </div>
           <div>
-            <h1 className="text-lg font-semibold text-white leading-tight">Mail Manager</h1>
-            <p className="text-xs text-gray-500">Thiết lập ban đầu · Exchange FPT</p>
+            <h1 className="text-lg font-semibold text-ink-strong leading-tight">Mail Manager</h1>
+            <p className="text-xs text-ink-dim">Thiết lập ban đầu · Exchange FPT</p>
           </div>
         </div>
 
@@ -79,10 +79,10 @@ export default function SetupWizard({ onDone }) {
             <React.Fragment key={s}>
               <div className="flex items-center gap-2">
                 <div className={`w-6 h-6 rounded-full flex items-center justify-center text-[11px] font-semibold shrink-0 transition-colors ${
-                  i < step ? 'bg-green-500 text-white' : i === step ? 'bg-primary text-white' : 'bg-dark-surface text-gray-600 border border-dark-border'}`}>
+                  i < step ? 'bg-green-500 text-ink-strong' : i === step ? 'bg-primary text-ink-strong' : 'bg-dark-surface text-ink-mute border border-dark-border'}`}>
                   {i < step ? <Check size={13} /> : i + 1}
                 </div>
-                <span className={`text-xs ${i === step ? 'text-white font-medium' : 'text-gray-600'}`}>{s}</span>
+                <span className={`text-xs ${i === step ? 'text-ink-strong font-medium' : 'text-ink-mute'}`}>{s}</span>
               </div>
               {i < STEPS.length - 1 && <div className={`flex-1 h-px ${i < step ? 'bg-green-500/50' : 'bg-dark-border'}`} />}
             </React.Fragment>
@@ -92,10 +92,10 @@ export default function SetupWizard({ onDone }) {
         <div className="bg-dark-surface border border-dark-border rounded-xl p-6">
           {step === 0 && (
             <div className="space-y-4">
-              <div className="flex items-start gap-3 p-3 bg-primary/10 border border-primary/25 rounded-lg">
+              <div className="flex items-start gap-3 p-3 bg-pa10 border border-pa25 rounded-lg">
                 <User size={16} className="text-primary mt-0.5 shrink-0" />
-                <p className="text-xs text-gray-400 leading-relaxed">
-                  Đây là <b className="text-gray-300">hồ sơ trên máy bạn</b> — dùng để khóa ứng dụng và tách dữ liệu
+                <p className="text-xs text-ink-dim leading-relaxed">
+                  Đây là <b className="text-ink">hồ sơ trên máy bạn</b> — dùng để khóa ứng dụng và tách dữ liệu
                   giữa những người dùng chung máy. Mật khẩu được băm PBKDF2, không ai khác thấy hộp thư của bạn.
                 </p>
               </div>
@@ -116,11 +116,11 @@ export default function SetupWizard({ onDone }) {
 
           {step === 1 && (
             <div className="space-y-4">
-              <div className="flex items-start gap-3 p-3 bg-primary/10 border border-primary/25 rounded-lg">
+              <div className="flex items-start gap-3 p-3 bg-pa10 border border-pa25 rounded-lg">
                 <Plug size={16} className="text-primary mt-0.5 shrink-0" />
-                <p className="text-xs text-gray-400 leading-relaxed">
-                  Kết nối hộp thư Exchange. Mật khẩu được <b className="text-gray-300">mã hóa Fernet</b> khi lưu,
-                  chỉ dùng để gọi EWS. Quá trình này chỉ <b className="text-gray-300">đọc</b> — không gửi hay sửa mail nào.
+                <p className="text-xs text-ink-dim leading-relaxed">
+                  Kết nối hộp thư Exchange. Mật khẩu được <b className="text-ink">mã hóa Fernet</b> khi lưu,
+                  chỉ dùng để gọi EWS. Quá trình này chỉ <b className="text-ink">đọc</b> — không gửi hay sửa mail nào.
                 </p>
               </div>
               <Field label="Email công việc">
@@ -146,16 +146,16 @@ export default function SetupWizard({ onDone }) {
                   </div>
                   <div className="grid grid-cols-2 gap-2 text-xs">
                     <div className="bg-dark-bg rounded px-2.5 py-1.5 flex items-center gap-2">
-                      <Inbox size={12} className="text-gray-500" />
-                      <span className="text-gray-400">Tổng:</span><b className="text-white">{verify.total ?? '—'}</b>
+                      <Inbox size={12} className="text-ink-dim" />
+                      <span className="text-ink-dim">Tổng:</span><b className="text-ink-strong">{verify.total ?? '—'}</b>
                     </div>
                     <div className="bg-dark-bg rounded px-2.5 py-1.5 flex items-center gap-2">
                       <span className="w-2 h-2 rounded-full bg-primary" />
-                      <span className="text-gray-400">Chưa đọc:</span><b className="text-white">{verify.unread ?? '—'}</b>
+                      <span className="text-ink-dim">Chưa đọc:</span><b className="text-ink-strong">{verify.unread ?? '—'}</b>
                     </div>
                   </div>
                   {verify.folders?.length > 0 && (
-                    <div className="text-[11px] text-gray-500 flex items-start gap-1.5">
+                    <div className="text-[11px] text-ink-dim flex items-start gap-1.5">
                       <FolderTree size={12} className="mt-0.5 shrink-0" />
                       <span>{verify.folders.slice(0, 6).join(', ')}{verify.folders.length > 6 ? ` +${verify.folders.length - 6}` : ''}</span>
                     </div>
@@ -175,22 +175,22 @@ export default function SetupWizard({ onDone }) {
               {!result && !err ? (
                 <>
                   <Loader2 size={30} className="animate-spin text-primary mx-auto mb-4" />
-                  <p className="text-sm text-gray-300 font-medium">Đang đồng bộ hộp thư…</p>
-                  <p className="text-xs text-gray-600 mt-1">Mail 60 thư gần nhất · lịch 14 ngày tới · danh bạ</p>
+                  <p className="text-sm text-ink font-medium">Đang đồng bộ hộp thư…</p>
+                  <p className="text-xs text-ink-mute mt-1">Mail 60 thư gần nhất · lịch 14 ngày tới · danh bạ</p>
                 </>
               ) : result ? (
                 <>
                   <div className="w-12 h-12 rounded-full bg-green-500/15 border border-green-500/30 flex items-center justify-center mx-auto mb-4">
                     <Check size={22} className="text-green-400" />
                   </div>
-                  <p className="text-sm text-white font-medium mb-3">Sẵn sàng — chào {result.user.display_name}</p>
+                  <p className="text-sm text-ink-strong font-medium mb-3">Sẵn sàng — chào {result.user.display_name}</p>
                   {result.sync && !result.sync.error && (
                     <div className="grid grid-cols-4 gap-2 text-center">
                       {[['Mail', result.sync.messages], ['Chủ đề', result.sync.threads],
                         ['Lịch', result.sync.events], ['Danh bạ', result.sync.contacts]].map(([k, v]) => (
                         <div key={k} className="bg-dark-bg border border-dark-border rounded-lg py-2.5">
                           <div className="text-lg font-semibold text-primary">{v ?? 0}</div>
-                          <div className="text-[10px] text-gray-600 uppercase tracking-wide">{k}</div>
+                          <div className="text-[10px] text-ink-mute uppercase tracking-wide">{k}</div>
                         </div>
                       ))}
                     </div>
@@ -213,7 +213,7 @@ export default function SetupWizard({ onDone }) {
         {/* nav */}
         <div className="flex items-center justify-between mt-5">
           <button onClick={() => setStep(Math.max(0, step - 1))} disabled={step === 0 || busy}
-            className="text-sm text-gray-500 hover:text-gray-300 flex items-center gap-1.5 disabled:opacity-30 px-2 py-1.5">
+            className="text-sm text-ink-dim hover:text-ink flex items-center gap-1.5 disabled:opacity-30 px-2 py-1.5">
             <ArrowLeft size={15} /> Quay lại
           </button>
           {step < 2 ? (
@@ -233,14 +233,14 @@ export default function SetupWizard({ onDone }) {
   )
 }
 
-const inp = "w-full bg-dark-bg border border-dark-border rounded-md px-3.5 py-2.5 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-primary"
+const inp = "w-full bg-dark-bg border border-dark-border rounded-md px-3.5 py-2.5 text-sm text-ink-strong placeholder-gray-600 focus:outline-none focus:border-primary"
 
 function Field({ label, hint, children }) {
   return (
     <div>
-      <label className="block text-xs font-medium text-gray-400 mb-1.5">{label}</label>
+      <label className="block text-xs font-medium text-ink-dim mb-1.5">{label}</label>
       {children}
-      {hint && <p className="text-[11px] text-gray-600 mt-1">{hint}</p>}
+      {hint && <p className="text-[11px] text-ink-mute mt-1">{hint}</p>}
     </div>
   )
 }

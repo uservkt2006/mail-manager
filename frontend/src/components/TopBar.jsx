@@ -33,21 +33,21 @@ export default function TopBar({ onOpenResults }) {
   return (
     <div className="h-11 flex-shrink-0 bg-dark-surface border-b border-dark-border flex items-center gap-3 px-3">
       <div ref={boxRef} className="relative flex-1 max-w-[560px]">
-        <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-600" />
+        <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-ink-mute" />
         <input
           ref={inputRef}
           value={q}
           onChange={e => setQ(e.target.value)}
           onKeyDown={e => { if (e.key === 'Enter') run(); if (e.key === 'Escape') setOpen(false) }}
           placeholder="Tìm kiếm mail, người, việc, lịch… ( / )"
-          className="w-full bg-dark-bg border border-dark-border rounded-md pl-9 pr-3 py-1.5 text-sm text-gray-200 placeholder-gray-600 focus:outline-none focus:border-primary"
+          className="w-full bg-dark-bg border border-dark-border rounded-md pl-9 pr-3 py-1.5 text-sm text-ink placeholder-gray-600 focus:outline-none focus:border-primary"
         />
         {open && results && (
           <div className="absolute top-full mt-1 left-0 right-0 bg-dark-surface border border-dark-border rounded-lg shadow-2xl z-50 max-h-[70vh] overflow-y-auto py-2">
-            <div className="px-3 py-1 text-[11px] text-gray-500 border-b border-dark-border mb-1">
+            <div className="px-3 py-1 text-[11px] text-ink-dim border-b border-dark-border mb-1">
               {total} kết quả cho “{q}” · chỉ dữ liệu của bạn
             </div>
-            {total === 0 && <div className="px-3 py-4 text-sm text-gray-500 text-center">Không có kết quả. Thử từ khóa khác.</div>}
+            {total === 0 && <div className="px-3 py-4 text-sm text-ink-dim text-center">Không có kết quả. Thử từ khóa khác.</div>}
             {results.messages.length > 0 && <Section title="Mail" items={results.messages.map(m => ({ main: m.subject, sub: `${m.from} · ${m.folder_name || ''}` }))} />}
             {results.contacts.length > 0 && <Section title="People" items={results.contacts.map(c => ({ main: c.name, sub: c.email }))} />}
             {results.tasks.length > 0 && <Section title="To Do" items={results.tasks.map(t => ({ main: t.title, sub: t.status }))} />}
@@ -56,7 +56,7 @@ export default function TopBar({ onOpenResults }) {
         )}
       </div>
       <div className="flex-1" />
-      <button className="p-2 rounded hover:bg-dark-hover text-gray-400" title="Thông báo (sắp có)"><Bell size={15} /></button>
+      <button className="p-2 rounded hover:bg-dark-hover text-ink-dim" title="Thông báo (sắp có)"><Bell size={15} /></button>
     </div>
   )
 }
@@ -64,11 +64,11 @@ export default function TopBar({ onOpenResults }) {
 function Section({ title, items }) {
   return (
     <div className="mb-1">
-      <div className="px-3 py-1 text-[10px] uppercase tracking-wider text-gray-600 font-semibold">{title}</div>
+      <div className="px-3 py-1 text-[10px] uppercase tracking-wider text-ink-mute font-semibold">{title}</div>
       {items.slice(0, 5).map((it, i) => (
         <div key={i} className="px-3 py-1.5 hover:bg-dark-hover cursor-default">
-          <div className="text-sm text-gray-200 truncate">{it.main}</div>
-          <div className="text-xs text-gray-500 truncate">{it.sub}</div>
+          <div className="text-sm text-ink truncate">{it.main}</div>
+          <div className="text-xs text-ink-dim truncate">{it.sub}</div>
         </div>
       ))}
     </div>

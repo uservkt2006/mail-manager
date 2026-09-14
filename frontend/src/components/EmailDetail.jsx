@@ -23,7 +23,7 @@ export default function EmailDetail({ email, folders, onArchive, onDelete, onSta
 
   if (!email) {
     return (
-      <div className="flex-1 flex items-center justify-center bg-dark-bg text-gray-600">
+      <div className="flex-1 flex items-center justify-center bg-dark-bg text-ink-mute">
         <div className="text-center">
           <Archive size={44} className="mx-auto mb-3 opacity-25" />
           <p className="text-sm">Chọn một thư để đọc tại đây</p>
@@ -64,14 +64,14 @@ export default function EmailDetail({ email, folders, onArchive, onDelete, onSta
                 .filter(f => f.id !== m.folder_id)
                 .map(f => (
                   <button key={f.id} onClick={() => { setShowMove(false); onMove(email.id, f.id) }}
-                    className="w-full text-left px-3 py-1.5 text-sm text-gray-300 hover:bg-dark-hover">{f.name}</button>
+                    className="w-full text-left px-3 py-1.5 text-sm text-ink hover:bg-dark-hover">{f.name}</button>
                 ))}
             </div>
           )}
         </div>
         <div className="relative">
           <button onClick={() => onFlag(email.id, m.flag_due ? null : new Date(Date.now() + 3 * 864e5).toISOString())}
-            className={`btn-secondary text-xs flex items-center gap-1.5 py-1.5 ${m.flag_due ? 'text-primary border-primary/40' : ''}`}>
+            className={`btn-secondary text-xs flex items-center gap-1.5 py-1.5 ${m.flag_due ? 'text-primary border-pa40' : ''}`}>
             <Flag size={13} /> Cờ
           </button>
         </div>
@@ -83,26 +83,26 @@ export default function EmailDetail({ email, folders, onArchive, onDelete, onSta
         </button>
         <div className="flex-1" />
         <button onClick={() => onStar(email.id)} className="p-1.5 rounded hover:bg-dark-hover">
-          <Star size={15} className={email.starred ? 'text-yellow-400 fill-current' : 'text-gray-500'} />
+          <Star size={15} className={email.starred ? 'text-yellow-400 fill-current' : 'text-ink-dim'} />
         </button>
         <button onClick={() => onArchive(email.id)} className="p-1.5 rounded hover:bg-dark-hover" title="Lưu trữ (A)">
-          <Archive size={15} className="text-gray-400" />
+          <Archive size={15} className="text-ink-dim" />
         </button>
         <button onClick={() => onDelete(email.id)} className="p-1.5 rounded hover:bg-dark-hover" title="Xóa (D)">
-          <Trash2 size={15} className="text-gray-400" />
+          <Trash2 size={15} className="text-ink-dim" />
         </button>
       </div>
 
       <div className="flex-1 overflow-y-auto">
         <div className="p-6 pb-4">
-          <h1 className="text-xl font-semibold text-white mb-4">{m.subject}</h1>
+          <h1 className="text-xl font-semibold text-ink-strong mb-4">{m.subject}</h1>
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-full bg-primary/20 text-primary flex items-center justify-center font-semibold shrink-0">
+            <div className="w-10 h-10 rounded-full bg-pa20 text-primary flex items-center justify-center font-semibold shrink-0">
               {(m.from || '?').trim()[0].toUpperCase()}
             </div>
             <div className="min-w-0">
-              <div className="font-medium text-white text-sm truncate">{(m.from || '').split('<')[0].trim() || m.from}</div>
-              <div className="text-xs text-gray-500 truncate">tới tôi · {fmtDate(m.date)}</div>
+              <div className="font-medium text-ink-strong text-sm truncate">{(m.from || '').split('<')[0].trim() || m.from}</div>
+              <div className="text-xs text-ink-dim truncate">tới tôi · {fmtDate(m.date)}</div>
               {m.flag_due && (
                 <div className="text-xs text-primary mt-0.5 flex items-center gap-1">
                   <Flag size={10} /> Follow-up: {fmtDate(m.flag_due)}
@@ -139,18 +139,18 @@ export default function EmailDetail({ email, folders, onArchive, onDelete, onSta
 
         {atts.length > 0 && (
           <div className="mx-6 mb-4 p-3 bg-dark-surface border border-dark-border rounded-lg">
-            <div className="text-[11px] uppercase tracking-wider text-gray-500 font-semibold mb-2">
+            <div className="text-[11px] uppercase tracking-wider text-ink-dim font-semibold mb-2">
               <Paperclip size={11} className="inline mr-1" />{atts.length} đính kèm
             </div>
             <div className="flex flex-wrap gap-2">
               {atts.map(a => (
                 <div key={a.id} className="flex items-center gap-2 bg-dark-bg border border-dark-border rounded-md px-2.5 py-1.5">
-                  <div className="w-6 h-6 rounded bg-primary/15 text-primary flex items-center justify-center text-[10px] font-bold uppercase">
+                  <div className="w-6 h-6 rounded bg-pa15 text-primary flex items-center justify-center text-[10px] font-bold uppercase">
                     {(a.name || '?').split('.').pop()}
                   </div>
                   <div className="text-xs">
-                    <div className="text-gray-200">{a.name}</div>
-                    <div className="text-gray-600">{a.size ? `${Math.round(a.size / 1024)} KB` : ''}</div>
+                    <div className="text-ink">{a.name}</div>
+                    <div className="text-ink-mute">{a.size ? `${Math.round(a.size / 1024)} KB` : ''}</div>
                   </div>
                 </div>
               ))}
@@ -159,7 +159,7 @@ export default function EmailDetail({ email, folders, onArchive, onDelete, onSta
         )}
 
         <div className="px-6 pb-8">
-          <p className="text-gray-300 text-sm leading-relaxed whitespace-pre-wrap">{m.body}</p>
+          <p className="text-ink text-sm leading-relaxed whitespace-pre-wrap">{m.body}</p>
         </div>
       </div>
     </div>

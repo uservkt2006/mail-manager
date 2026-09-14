@@ -52,7 +52,7 @@ export default function App() {
   }, [])
 
   if (booting) {
-    return <div className="h-screen flex items-center justify-center bg-dark-bg text-gray-600 text-sm">Đang tải…</div>
+    return <div className="h-screen flex items-center justify-center bg-dark-bg text-ink-mute text-sm">Đang tải…</div>
   }
   if (!user) {
     return setupNeeded

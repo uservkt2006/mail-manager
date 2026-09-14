@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react'
 import { Plus, Trash2, Flag, Link2, Check, Circle, Loader2 } from 'lucide-react'
 import { api } from '../api'
 
-const STATUS = { not_started: { icon: Circle, label: 'Chưa làm', cls: 'text-gray-500' },
+const STATUS = { not_started: { icon: Circle, label: 'Chưa làm', cls: 'text-ink-dim' },
                  in_progress: { icon: Loader2, label: 'Đang làm', cls: 'text-primary' },
                  completed: { icon: Check, label: 'Xong', cls: 'text-green-500' } }
 const NEXT = { not_started: 'in_progress', in_progress: 'completed', completed: 'not_started' }
@@ -36,10 +36,10 @@ export default function TasksView() {
     <div className="flex-1 bg-dark-bg overflow-y-auto p-6">
       <div className="max-w-3xl mx-auto">
         <div className="flex items-center justify-between mb-1">
-          <h2 className="text-lg font-semibold text-white">To Do</h2>
+          <h2 className="text-lg font-semibold text-ink-strong">To Do</h2>
           <button onClick={() => setAdding(true)} className="btn-primary text-sm flex items-center gap-1.5 py-1.5"><Plus size={14} /> Công việc</button>
         </div>
-        <p className="text-xs text-gray-600 mb-4">
+        <p className="text-xs text-ink-mute mb-4">
           {tasks.filter(t => t.status !== 'completed').length} đang mở ·
           {tasks.filter(t => overdue(t)).length} quá hạn · bấm trạng thái để đổi
         </p>
@@ -47,7 +47,7 @@ export default function TasksView() {
         <div className="flex gap-1.5 mb-4">
           {[['all', 'Tất cả'], ['open', 'Đang mở'], ['today', 'Hôm nay / quá hạn']].map(([id, lbl]) => (
             <button key={id} onClick={() => setFilter(id)}
-              className={`px-3 py-1 rounded-md text-xs ${filter === id ? 'bg-primary text-white' : 'bg-dark-surface text-gray-400 hover:bg-dark-hover border border-dark-border'}`}>
+              className={`px-3 py-1 rounded-md text-xs ${filter === id ? 'bg-primary text-ink-strong' : 'bg-dark-surface text-ink-dim hover:bg-dark-hover border border-dark-border'}`}>
               {lbl}
             </button>
           ))}
@@ -56,7 +56,7 @@ export default function TasksView() {
         {adding && (
           <form onSubmit={submit} className="flex gap-2 mb-3">
             <input autoFocus value={title} onChange={e => setTitle(e.target.value)} placeholder="Tên công việc…"
-              className="flex-1 bg-dark-surface border border-primary/50 rounded-md px-3 py-2 text-sm text-white placeholder-gray-600 focus:outline-none" />
+              className="flex-1 bg-dark-surface border border-pa50 rounded-md px-3 py-2 text-sm text-ink-strong placeholder-gray-600 focus:outline-none" />
             <button type="submit" className="btn-primary text-sm">Thêm</button>
           </form>
         )}
@@ -71,8 +71,8 @@ export default function TasksView() {
                   <S.icon size={16} />
                 </button>
                 <div className="flex-1 min-w-0">
-                  <div className={`text-sm truncate ${t.status === 'completed' ? 'text-gray-500 line-through' : 'text-gray-200'}`}>{t.title}</div>
-                  <div className="flex items-center gap-3 text-[11px] text-gray-600 mt-0.5">
+                  <div className={`text-sm truncate ${t.status === 'completed' ? 'text-ink-dim line-through' : 'text-ink'}`}>{t.title}</div>
+                  <div className="flex items-center gap-3 text-[11px] text-ink-mute mt-0.5">
                     {t.due_at && (
                       <span className={`flex items-center gap-1 ${overdue(t) ? 'text-red-400' : ''}`}>
                         <Flag size={10} /> {new Date(t.due_at).toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit' })} {S.label}
@@ -82,11 +82,11 @@ export default function TasksView() {
                   </div>
                 </div>
                 <button onClick={async () => { await api.delTask(t.id); load() }}
-                  className="opacity-0 group-hover:opacity-100 text-gray-600 hover:text-red-400"><Trash2 size={14} /></button>
+                  className="opacity-0 group-hover:opacity-100 text-ink-mute hover:text-red-400"><Trash2 size={14} /></button>
               </div>
             )
           })}
-          {shown.length === 0 && <p className="text-sm text-gray-600 text-center py-8">Không có công việc nào ở đây 🎉</p>}
+          {shown.length === 0 && <p className="text-sm text-ink-mute text-center py-8">Không có công việc nào ở đây 🎉</p>}
         </div>
       </div>
     </div>

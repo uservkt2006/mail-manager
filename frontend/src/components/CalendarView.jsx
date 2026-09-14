@@ -42,17 +42,17 @@ export default function CalendarView() {
     <div className="flex-1 flex overflow-hidden bg-dark-bg">
       <div className="flex-1 flex flex-col p-4 overflow-hidden">
         <div className="flex items-center gap-3 mb-3">
-          <h2 className="text-lg font-semibold text-white min-w-[180px]">
+          <h2 className="text-lg font-semibold text-ink-strong min-w-[180px]">
             Tháng {month.getMonth() + 1} / {month.getFullYear()}
           </h2>
-          <button onClick={() => setMonth(new Date(month.getFullYear(), month.getMonth() - 1, 1))} className="p-1.5 rounded hover:bg-dark-hover text-gray-400"><ChevronLeft size={16} /></button>
+          <button onClick={() => setMonth(new Date(month.getFullYear(), month.getMonth() - 1, 1))} className="p-1.5 rounded hover:bg-dark-hover text-ink-dim"><ChevronLeft size={16} /></button>
           <button onClick={() => { const d = new Date(); setMonth(new Date(d.getFullYear(), d.getMonth(), 1)); setSel(d) }} className="text-xs btn-secondary py-1 px-2">Hôm nay</button>
-          <button onClick={() => setMonth(new Date(month.getFullYear(), month.getMonth() + 1, 1))} className="p-1.5 rounded hover:bg-dark-hover text-gray-400"><ChevronRight size={16} /></button>
+          <button onClick={() => setMonth(new Date(month.getFullYear(), month.getMonth() + 1, 1))} className="p-1.5 rounded hover:bg-dark-hover text-ink-dim"><ChevronRight size={16} /></button>
           <div className="flex-1" />
           <button onClick={() => setAdding(true)} className="btn-primary text-sm flex items-center gap-1.5 py-1.5"><Plus size={14} /> Sự kiện</button>
         </div>
 
-        <div className="grid grid-cols-7 text-center text-[11px] text-gray-600 font-medium mb-1">
+        <div className="grid grid-cols-7 text-center text-[11px] text-ink-mute font-medium mb-1">
           {WD.map(w => <div key={w}>{w}</div>)}
         </div>
         <div className="flex-1 grid grid-cols-7 auto-rows-fr gap-px bg-dark-border border border-dark-border rounded-lg overflow-hidden min-h-[380px]">
@@ -63,8 +63,8 @@ export default function CalendarView() {
             const isSel = sameDay(d, sel)
             return (
               <div key={i} onClick={() => setSel(d)}
-                className={`bg-dark-bg p-1.5 cursor-pointer flex flex-col gap-1 overflow-hidden transition-colors ${isSel ? 'bg-primary/10' : 'hover:bg-dark-hover'}`}>
-                <span className={`text-xs w-6 h-6 flex items-center justify-center rounded-full ${isToday ? 'bg-primary text-white font-semibold' : 'text-gray-400'}`}>{d.getDate()}</span>
+                className={`bg-dark-bg p-1.5 cursor-pointer flex flex-col gap-1 overflow-hidden transition-colors ${isSel ? 'bg-pa10' : 'hover:bg-dark-hover'}`}>
+                <span className={`text-xs w-6 h-6 flex items-center justify-center rounded-full ${isToday ? 'bg-primary text-ink-strong font-semibold' : 'text-ink-dim'}`}>{d.getDate()}</span>
                 <div className="space-y-0.5 overflow-hidden">
                   {evs.slice(0, 2).map(e => (
                     <div key={e.id} className="text-[10px] truncate rounded px-1 py-0.5"
@@ -72,7 +72,7 @@ export default function CalendarView() {
                       {new Date(e.start_at).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })} {e.subject}
                     </div>
                   ))}
-                  {evs.length > 2 && <div className="text-[10px] text-gray-600 pl-1">+{evs.length - 2} nữa</div>}
+                  {evs.length > 2 && <div className="text-[10px] text-ink-mute pl-1">+{evs.length - 2} nữa</div>}
                 </div>
               </div>
             )
@@ -81,22 +81,22 @@ export default function CalendarView() {
       </div>
 
       <div className="w-72 flex-shrink-0 border-l border-dark-border bg-dark-surface p-4 overflow-y-auto">
-        <h3 className="text-sm font-semibold text-white mb-1">{sel.toLocaleDateString('vi-VN', { weekday: 'long', day: '2-digit', month: 'long' })}</h3>
-        <p className="text-xs text-gray-600 mb-4">{dayEvents.length} sự kiện</p>
+        <h3 className="text-sm font-semibold text-ink-strong mb-1">{sel.toLocaleDateString('vi-VN', { weekday: 'long', day: '2-digit', month: 'long' })}</h3>
+        <p className="text-xs text-ink-mute mb-4">{dayEvents.length} sự kiện</p>
         {adding && (
-          <form onSubmit={submit} className="space-y-2 mb-4 p-3 bg-dark-bg border border-primary/40 rounded-lg">
+          <form onSubmit={submit} className="space-y-2 mb-4 p-3 bg-dark-bg border border-pa40 rounded-lg">
             <input autoFocus placeholder="Tiêu đề" value={form.subject} onChange={e => setForm({ ...form, subject: e.target.value })} required
-              className="w-full bg-transparent border border-dark-border rounded px-2.5 py-1.5 text-sm text-white focus:outline-none focus:border-primary" />
+              className="w-full bg-transparent border border-dark-border rounded px-2.5 py-1.5 text-sm text-ink-strong focus:outline-none focus:border-primary" />
             <div className="flex gap-2">
               <input type="time" value={form.time} onChange={e => setForm({ ...form, time: e.target.value })}
-                className="flex-1 bg-transparent border border-dark-border rounded px-2.5 py-1.5 text-sm text-white focus:outline-none focus:border-primary" />
+                className="flex-1 bg-transparent border border-dark-border rounded px-2.5 py-1.5 text-sm text-ink-strong focus:outline-none focus:border-primary" />
               <input type="number" min="15" step="15" value={form.dur} onChange={e => setForm({ ...form, dur: +e.target.value })} title="Phút"
-                className="w-16 bg-transparent border border-dark-border rounded px-2.5 py-1.5 text-sm text-white focus:outline-none focus:border-primary" />
+                className="w-16 bg-transparent border border-dark-border rounded px-2.5 py-1.5 text-sm text-ink-strong focus:outline-none focus:border-primary" />
             </div>
             <input placeholder="Địa điểm" value={form.location} onChange={e => setForm({ ...form, location: e.target.value })}
-              className="w-full bg-transparent border border-dark-border rounded px-2.5 py-1.5 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-primary" />
+              className="w-full bg-transparent border border-dark-border rounded px-2.5 py-1.5 text-sm text-ink-strong placeholder-gray-600 focus:outline-none focus:border-primary" />
             <select value={form.category} onChange={e => setForm({ ...form, category: e.target.value })}
-              className="w-full bg-dark-bg border border-dark-border rounded px-2.5 py-1.5 text-sm text-white focus:outline-none">
+              className="w-full bg-dark-bg border border-dark-border rounded px-2.5 py-1.5 text-sm text-ink-strong focus:outline-none">
               {Object.keys(CAT_COLORS).map(c => <option key={c} value={c}>{c}</option>)}
             </select>
             <div className="flex gap-2">
@@ -106,13 +106,13 @@ export default function CalendarView() {
           </form>
         )}
         <div className="space-y-2">
-          {dayEvents.length === 0 && !adding && <p className="text-sm text-gray-600">Trống. Bấm “Sự kiện” để thêm.</p>}
+          {dayEvents.length === 0 && !adding && <p className="text-sm text-ink-mute">Trống. Bấm “Sự kiện” để thêm.</p>}
           {dayEvents.map(e => (
             <div key={e.id} className="group bg-dark-bg border border-dark-border rounded-lg p-3">
               <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0">
-                  <div className="text-sm text-white font-medium truncate">{e.subject}</div>
-                  <div className="text-xs text-gray-500 flex items-center gap-1 mt-0.5">
+                  <div className="text-sm text-ink-strong font-medium truncate">{e.subject}</div>
+                  <div className="text-xs text-ink-dim flex items-center gap-1 mt-0.5">
                     <Clock size={10} />
                     {new Date(e.start_at).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}
                     {e.location && ` · ${e.location}`}
@@ -123,7 +123,7 @@ export default function CalendarView() {
                   </span>
                 </div>
                 <button onClick={async () => { await api.delEvent(e.id); load() }}
-                  className="opacity-0 group-hover:opacity-100 text-gray-600 hover:text-red-400"><Trash2 size={13} /></button>
+                  className="opacity-0 group-hover:opacity-100 text-ink-mute hover:text-red-400"><Trash2 size={13} /></button>
               </div>
             </div>
           ))}

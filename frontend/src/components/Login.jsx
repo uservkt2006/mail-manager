@@ -27,25 +27,25 @@ export default function Login({ onDone }) {
       <form onSubmit={submit} className="w-[360px] bg-dark-surface border border-dark-border rounded-xl p-8">
         <div className="flex items-center gap-3 mb-6">
           <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-primary to-blue-600 flex items-center justify-center">
-            <Mail size={20} className="text-white" />
+            <Mail size={20} className="text-ink-strong" />
           </div>
           <div>
-            <h1 className="font-semibold text-white">Mail Manager</h1>
-            <p className="text-xs text-gray-500">Đăng nhập để tiếp tục</p>
+            <h1 className="font-semibold text-ink-strong">Mail Manager</h1>
+            <p className="text-xs text-ink-dim">Đăng nhập để tiếp tục</p>
           </div>
         </div>
-        <label className="block text-xs font-medium text-gray-400 mb-1.5">Email công việc</label>
+        <label className="block text-xs font-medium text-ink-dim mb-1.5">Email công việc</label>
         <input
           type="email" required autoFocus value={email} onChange={e => setEmail(e.target.value)}
           placeholder="ten.ban@fpt.com"
-          className="w-full bg-dark-bg border border-dark-border rounded-md px-3.5 py-2.5 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-primary mb-4"
+          className="w-full bg-dark-bg border border-dark-border rounded-md px-3.5 py-2.5 text-sm text-ink-strong placeholder-gray-600 focus:outline-none focus:border-primary mb-4"
         />
-        <label className="block text-xs font-medium text-gray-400 mb-1.5">Mật khẩu</label>
+        <label className="block text-xs font-medium text-ink-dim mb-1.5">Mật khẩu</label>
         <div className="relative mb-5">
-          <Lock size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-600" />
+          <Lock size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-ink-mute" />
           <input
             type="password" required value={password} onChange={e => setPassword(e.target.value)}
-            className="w-full bg-dark-bg border border-dark-border rounded-md pl-9 pr-3 py-2.5 text-sm text-white focus:outline-none focus:border-primary"
+            className="w-full bg-dark-bg border border-dark-border rounded-md pl-9 pr-3 py-2.5 text-sm text-ink-strong focus:outline-none focus:border-primary"
           />
         </div>
         {err && <div className="text-sm text-red-400 bg-red-500/10 border border-red-500/20 rounded-md px-3 py-2 mb-4">{err}</div>}
@@ -54,8 +54,8 @@ export default function Login({ onDone }) {
           {busy ? <Loader2 size={16} className="animate-spin" /> : null}
           Đăng nhập
         </button>
-        <p className="text-[11px] text-gray-600 mt-4 leading-relaxed">
-          Demo: <code className="text-gray-500">demo@fpt.com</code> hoặc <code className="text-gray-500">nhanvien@fpt.com</code>
+        <p className="text-[11px] text-ink-mute mt-4 leading-relaxed">
+          Demo: <code className="text-ink-dim">demo@fpt.com</code> hoặc <code className="text-ink-dim">nhanvien@fpt.com</code>
           <span className="block mt-0.5">Dữ liệu của mỗi người dùng được tách biệt hoàn toàn.</span>
         </p>
       </form>

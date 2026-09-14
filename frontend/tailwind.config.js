@@ -3,12 +3,20 @@ export default {
   theme: {
     extend: {
       colors: {
-        primary: '#4c8dff',
+        primary: 'var(--primary)',
+        danger: 'var(--danger)',
+        success: 'var(--success)',
         dark: {
-          bg: '#0c0e12',
-          surface: '#161b22',
-          border: '#21262d',
-          hover: '#1f2937'
+          bg: 'var(--bg)',
+          surface: 'var(--surface)',
+          border: 'var(--border)',
+          hover: 'var(--hover)'
+        },
+        ink: {
+          DEFAULT: 'var(--text)',
+          strong: 'var(--text-strong)',
+          dim: 'var(--text-dim)',
+          mute: 'var(--text-mute)'
         }
       },
       fontFamily: {

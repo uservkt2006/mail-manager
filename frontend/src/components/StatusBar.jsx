@@ -31,16 +31,16 @@ export default function StatusBar({ itemInfo, online, onRefresh, hasAccount }) {
   }
 
   return (
-    <div className="h-7 flex-shrink-0 bg-dark-surface border-t border-dark-border flex items-center px-3 gap-4 text-[11px] text-gray-500 select-none">
+    <div className="h-7 flex-shrink-0 bg-dark-surface border-t border-dark-border flex items-center px-3 gap-4 text-[11px] text-ink-dim select-none">
       <span>{itemInfo}</span>
       <div className="flex-1" />
       {note && <span className="text-primary">{note}</span>}
       {hasAccount && (
-        <button onClick={doSync} disabled={syncing} className="flex items-center gap-1.5 hover:text-gray-300 disabled:opacity-60" title="Đồng bộ ngay với Exchange">
+        <button onClick={doSync} disabled={syncing} className="flex items-center gap-1.5 hover:text-ink disabled:opacity-60" title="Đồng bộ ngay với Exchange">
           <CloudCog size={11} className={syncing ? 'animate-spin' : ''} /> {syncing ? 'Đang đồng bộ…' : 'Đồng bộ ngay'}
         </button>
       )}
-      <button onClick={refresh} className="flex items-center gap-1.5 hover:text-gray-300">
+      <button onClick={refresh} className="flex items-center gap-1.5 hover:text-ink">
         <RefreshCw size={11} className={spinning ? 'animate-spin' : ''} /> Làm mới
       </button>
       <span className="flex items-center gap-1.5">

@@ -67,5 +67,13 @@ export const api = {
   delEvent: (id) => req('DELETE', `/events/${id}`),
   accounts: () => req('GET', '/accounts'),
   addAccount: (a) => req('POST', '/accounts', a),
-  audit: () => req('GET', '/audit')
+  audit: () => req('GET', '/audit'),
+  settings: () => req('GET', '/settings'),
+  saveSettings: (values) => req('PUT', '/settings', { values })
 }
+
+// push theme/density prefs to the server (best-effort, silent on failure)
+import { setSettingsPusher } from './theme'
+setSettingsPusher((values) => {
+  req('PUT', '/settings', { values }).catch(() => {})
+})

@@ -126,7 +126,7 @@ export default function MailView({ user }) {
       )}
       {toast && (
         <div className="absolute bottom-8 left-1/2 -translate-x-1/2 bg-dark-surface border border-dark-border rounded-lg shadow-2xl px-4 py-2.5 flex items-center gap-3 z-50">
-          <span className="text-sm text-gray-200">{toast.msg}</span>
+          <span className="text-sm text-ink">{toast.msg}</span>
           {toast.action && <button onClick={toast.action} className="text-sm text-primary font-medium hover:underline">Hoàn tác</button>}
         </div>
       )}

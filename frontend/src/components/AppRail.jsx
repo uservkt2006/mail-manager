@@ -17,7 +17,7 @@ export default function AppRail({ module, onModule, user, onSettings }) {
           key={m.id}
           onClick={() => onModule(m.id)}
           className={`relative w-11 h-11 mb-1 rounded-lg flex flex-col items-center justify-center gap-0.5 transition-colors ${
-            module === m.id ? 'bg-primary/15 text-primary' : 'text-gray-500 hover:bg-dark-hover'}`}
+            module === m.id ? 'bg-pa15 text-primary' : 'text-ink-dim hover:bg-dark-hover'}`}
           title={m.label}
         >
           <m.icon size={17} />
@@ -26,10 +26,10 @@ export default function AppRail({ module, onModule, user, onSettings }) {
         </button>
       ))}
       <div className="flex-1" />
-      <button onClick={onSettings} className="w-11 h-11 rounded-lg flex items-center justify-center text-gray-500 hover:bg-dark-hover" title="Cài đặt">
+      <button onClick={onSettings} className="w-11 h-11 rounded-lg flex items-center justify-center text-ink-dim hover:bg-dark-hover" title="Cài đặt">
         <Settings size={17} />
       </button>
-      <div className="mt-2 w-9 h-9 rounded-full bg-primary/25 text-primary flex items-center justify-center text-xs font-semibold" title={user.email}>
+      <div className="mt-2 w-9 h-9 rounded-full bg-pa25 text-primary flex items-center justify-center text-xs font-semibold" title={user.email}>
         {initials}
       </div>
     </div>

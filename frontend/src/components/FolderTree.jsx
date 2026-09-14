@@ -12,22 +12,22 @@ function Node({ node, depth, activeId, onSelect, onDelete }) {
   return (
     <div>
       <div
-        className={`folder-item group flex items-center gap-2 pr-2 rounded-md text-sm cursor-pointer ${active ? 'active' : 'text-gray-400'}`}
+        className={`folder-item group flex items-center gap-2 pr-2 rounded-md text-sm cursor-pointer ${active ? 'active' : 'text-ink-dim'}`}
         style={{ paddingLeft: 12 + depth * 14 }}
         onClick={() => onSelect(node)}
       >
         {hasKids ? (
-          <button onClick={e => { e.stopPropagation(); setOpen(!open) }} className="text-gray-600 hover:text-gray-300">
+          <button onClick={e => { e.stopPropagation(); setOpen(!open) }} className="text-ink-mute hover:text-ink">
             {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
           </button>
         ) : <span className="w-3" />}
-        <Icon size={14} className={active ? 'text-primary' : 'text-gray-500'} />
+        <Icon size={14} className={active ? 'text-primary' : 'text-ink-dim'} />
         <span className="flex-1 truncate">{node.name}</span>
         {node.unread > 0 && <span className="badge-unread">{node.unread}</span>}
         {node.type === 'user' && (
           <button
             onClick={e => { e.stopPropagation(); if (confirm(`Xóa thư mục "${node.name}"? Thư bên trong chuyển về hộp thư đến.`)) { onDelete(node) } }}
-            className="opacity-0 group-hover:opacity-100 text-gray-600 hover:text-red-400"
+            className="opacity-0 group-hover:opacity-100 text-ink-mute hover:text-red-400"
           ><X size={12} /></button>
         )}
       </div>
@@ -58,19 +58,19 @@ export default function FolderTree({ tree, activeFolderId, onSelect, onChanged }
         </button>
       </div>
       <div className="flex-1 overflow-y-auto py-2">
-        <div className="px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wider text-gray-600 flex items-center justify-between">
+        <div className="px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wider text-ink-mute flex items-center justify-between">
           Folders
           {adding ? (
-            <button onClick={() => setAdding(false)} className="text-gray-500 hover:text-white"><X size={12} /></button>
+            <button onClick={() => setAdding(false)} className="text-ink-dim hover:text-ink-strong"><X size={12} /></button>
           ) : (
-            <button onClick={() => setAdding(true)} className="text-gray-600 hover:text-primary" title="Tạo thư mục"><Plus size={12} /></button>
+            <button onClick={() => setAdding(true)} className="text-ink-mute hover:text-primary" title="Tạo thư mục"><Plus size={12} /></button>
           )}
         </div>
         {adding && (
-          <form onSubmit={submitAdd} className="mx-3 mb-1.5 bg-dark-bg border border-primary/40 rounded-md p-2">
+          <form onSubmit={submitAdd} className="mx-3 mb-1.5 bg-dark-bg border border-pa40 rounded-md p-2">
             <input autoFocus value={name} onChange={e => setName(e.target.value)} placeholder="Tên thư mục..."
-              className="w-full bg-transparent text-sm text-white placeholder-gray-600 focus:outline-none mb-1" />
-            <label className="flex items-center gap-1.5 text-[11px] text-gray-500 mb-1.5">
+              className="w-full bg-transparent text-sm text-ink-strong placeholder-gray-600 focus:outline-none mb-1" />
+            <label className="flex items-center gap-1.5 text-[11px] text-ink-dim mb-1.5">
               <input type="checkbox" checked={inInbox} onChange={e => setInInbox(e.target.checked)} />
               Con của Hộp thư đến
             </label>
