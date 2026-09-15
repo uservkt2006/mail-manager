@@ -84,6 +84,11 @@ def current_user(x_auth_token: str = Header(default=None)) -> dict:
     return dict(row)
 
 
+def current_user_q(x_auth_token: str = Header(default=None), token: str = "") -> dict:
+    """For direct-download links (browser can't set headers): token via query too."""
+    return current_user(x_auth_token or token or None)
+
+
 # ─── db ───────────────────────────────────────────────────────────────
 @contextmanager
 def get_db():
@@ -830,7 +835,8 @@ def ews_send(user_id: int, to: str, cc: str, bcc: str, subject: str, body: str,
              in_reply_to: str = None, references: str = None) -> dict:
     """Send a real message through Exchange. attachments: [{name, content_base64, content_type}]."""
     from exchangelib.items import Message as EWSMessage
-    from exchangelib.properties import MessageBody, ItemAttachment, Mailbox, SMTPAddress
+    from exchangelib.properties import HTMLBody, Mailbox
+    from exchangelib.attachments import FileAttachment
     import base64 as _b64
     account, acct_row = first_account_connect(user_id)
     if not account:
@@ -854,14 +860,14 @@ def ews_send(user_id: int, to: str, cc: str, bcc: str, subject: str, body: str,
         cc_recipients=_mb(cc),
         bcc_recipients=_mb(bcc),
         subject=subject or "(không tiêu đề)",
-        body=MessageBody(body_type=("HTML" if html else "TEXT"), content=body),
+        body=HTMLBody(body) if html else body,
     )
     if in_reply_to:
         m.reply_to = in_reply_to
     for att in (attachments or []):
         try:
             raw = _b64.b64decode(att.get("content_base64", ""))
-            m.attach(ItemAttachment(name=att["name"], content=raw,
+            m.attach(FileAttachment(name=att["name"], content=raw,
                                     content_type=att.get("content_type") or "application/octet-stream"))
         except Exception as e:
             logger.error(f"attach {att.get('name')}: {e}")
@@ -887,6 +893,23 @@ def ews_get_attachment(user_id: int, message_id: str, att_name: str) -> bytes:
             att = att.copy(account) if not getattr(att, "content", None) else att
             return att.content or b""
     raise HTTPException(404, "Không tìm thấy tệp đính kèm")
+
+
+def ews_set_read(user_id: int, message_id: str, is_read: bool) -> bool:
+    """Mirror read-state on Exchange (UpdateItem on the Read flag)."""
+    account, _ = first_account_connect(user_id)
+    if not account:
+        return False
+    item = _find_ews_item(account, None, "", message_id)
+    if not item:
+        return False
+    try:
+        item.is_read = is_read
+        item.save(update_fields=["is_read"])
+        return True
+    except Exception as e:
+        logger.error(f"ews set_read {message_id[:30]}: {e}")
+        return False
 
 
 def _find_server_folder(account, names):
@@ -1271,7 +1294,8 @@ class SettingsReq(BaseModel):
 
 
 DEFAULT_SETTINGS = {"theme": "dark", "density": "comfortable", "reading_pane": "right",
-                    "signature": "", "autosync": False, "sync_interval_min": 5,
+                    "signature": "", "signature_html": "", "compose_font": "Calibri",
+                    "compose_size": "14px", "autosync": False, "sync_interval_min": 5,
                     "default_reply_all": False}
 
 
@@ -1408,6 +1432,11 @@ async def api_email_get(email_id: str, user: dict = Depends(current_user)):
         if not row:
             raise HTTPException(404, "Email not found")
         conn.execute("UPDATE messages SET is_read=1 WHERE id=?", (email_id,))
+        if not row["is_read"] and row["message_id"]:
+            try:
+                ews_set_read(user["id"], row["message_id"], True)
+            except Exception as e:
+                logger.error(f"open-mark-read {email_id}: {e}")
         m = _parse_msg(row)
         m["is_read"] = True
         m["attachments"] = [dict(r) for r in conn.execute(
@@ -1416,7 +1445,7 @@ async def api_email_get(email_id: str, user: dict = Depends(current_user)):
 
 
 @app.get("/api/emails/{email_id}/attachments/{att_id}/download")
-async def api_attachment_download(email_id: str, att_id: str, user: dict = Depends(current_user)):
+async def api_attachment_download(email_id: str, att_id: str, user: dict = Depends(current_user_q)):
     """Stream one attachment: prefer cached server fetch, fall back to EWS live download."""
     with get_db() as conn:
         mrow = conn.execute("SELECT message_id FROM messages WHERE id=? AND user_id=?", (email_id, user["id"])).fetchone()
@@ -1523,18 +1552,24 @@ async def api_star(email_id: str, user: dict = Depends(current_user)):
     return {"success": True, "starred": bool(v)}
 
 
+@app.put("/api/emails/{email_id}/read")
+async def api_read(email_id: str, req: ReadReq, user: dict = Depends(current_user)):
+    with get_db() as conn:
+        m = conn.execute("SELECT message_id FROM messages WHERE id=? AND user_id=?", (email_id, user["id"])).fetchone()
+        conn.execute("UPDATE messages SET is_read=? WHERE id=? AND user_id=?", (1 if req.is_read else 0, email_id, user["id"]))
+    # propagate read-state to Exchange (mark as read / clear flag)
+    if m and m["message_id"]:
+        try:
+            ews_set_read(user["id"], m["message_id"], req.is_read)
+        except Exception as e:
+            logger.error(f"server read-state {email_id}: {e}")
+    return {"success": True}
+
+
 @app.post("/api/emails/{email_id}/flag")
 async def api_flag(email_id: str, req: FlagReq, user: dict = Depends(current_user)):
     with get_db() as conn:
         conn.execute("UPDATE messages SET flag_due=? WHERE id=? AND user_id=?", (req.due, email_id, user["id"]))
-    return {"success": True}
-
-
-@app.put("/api/emails/{email_id}/read")
-async def api_read(email_id: str, req: ReadReq, user: dict = Depends(current_user)):
-    with get_db() as conn:
-        conn.execute("UPDATE messages SET is_read=? WHERE id=? AND user_id=?",
-                     (1 if req.is_read else 0, email_id, user["id"]))
     return {"success": True}
 
 
@@ -1679,7 +1714,11 @@ async def api_compose(req: ComposeReq, user: dict = Depends(current_user)):
             (mid, user["id"], f"<{mid}>", tid, _get_user_folder(conn, user["id"], ftype),
              user["email"], req.to, req.cc, req.bcc, req.subject, now_iso(), _strip_html(body)[:400],
              _strip_html(body), body))
-        # persist attachments (bytes already base64 in req via upload endpoint; store meta only here)
+        # persist attachment meta so the sent row shows them immediately (bytes live on server)
+        for i, att in enumerate(req.attachments or []):
+            conn.execute("INSERT OR IGNORE INTO attachments (id,message_id,name,mime_type,size) VALUES (?,?,?,?,?)",
+                         (f"att-{mid}-{i}", mid, att.get("name"), att.get("content_type"),
+                          int(len(att.get("content_base64", "")) * 0.75)))
         if req.send:
             audit(conn, user["id"], "mail.send", mid, req.to)
     if req.send:
@@ -1689,9 +1728,10 @@ async def api_compose(req: ComposeReq, user: dict = Depends(current_user)):
                            html=True, attachments=req.attachments,
                            in_reply_to=req.in_reply_to)
             server_ok = True
-            if server_ok and res.get("item_id"):
+            if res.get("item_id") or res.get("message_id"):
                 with get_db() as conn:
-                    conn.execute("UPDATE messages SET ews_item_id=? WHERE id=?", (res["item_id"], mid))
+                    conn.execute("UPDATE messages SET ews_item_id=COALESCE(NULLIF(?, ''), ews_item_id), message_id=COALESCE(NULLIF(?, ''), message_id) WHERE id=?",
+                                 (res.get("item_id", ""), res.get("message_id", ""), mid))
         except Exception as e:
             logger.error(f"EWS send failed (kept local): {e}")
             server_ok = False

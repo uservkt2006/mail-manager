@@ -5,8 +5,10 @@ import EmailDetail from './EmailDetail'
 import ComposeModal from './ComposeModal'
 import ContextMenu from './ContextMenu'
 import ReadingModal from './ReadingModal'
+import SearchFolderModal from './SearchFolderModal'
+import RuleModal from './RuleModal'
 import { Group, Panel, Separator, useDefaultLayout } from 'react-resizable-panels'
-import { Archive, Trash2, Star, Mail, MailOpen, Flag, Tag, Share2, CornerUpLeft, CornerUpRight, FolderInput, CheckCheck } from 'lucide-react'
+import { Archive, Trash2, Star, Mail, MailOpen, Flag, Tag, Share2, CornerUpLeft, CornerUpRight, FolderInput, CheckCheck, Zap } from 'lucide-react'
 import { api } from '../api'
 import { getDensity, getReadingPane } from '../theme'
 
@@ -23,6 +25,9 @@ export default function MailView({ user, catMeta: catMetaProp, onOpenSettings })
   const [loading, setLoading] = useState(false)
   const [compose, setCompose] = useState(null)
   const [ctx, setCtx] = useState(null)          // {email, x, y}
+  const [searchFolders, setSearchFolders] = useState([])
+  const [sfModal, setSfModal] = useState(false)
+  const [ruleFor, setRuleFor] = useState(null)   // email used to prefill a new rule
   const [readModal, setReadModal] = useState(false)
   const outerLayout = useDefaultLayout({ id: 'mm-mail', storage: window.localStorage, panelIds: ['folders', 'main'] })
   const innerLayout = useDefaultLayout({ id: 'mm-main', storage: window.localStorage, panelIds: ['list', 'detail'] })
@@ -34,6 +39,8 @@ export default function MailView({ user, catMeta: catMetaProp, onOpenSettings })
     setToast({ msg, action })
     setTimeout(() => setToast(null), 5000)
   }
+
+  const loadSf = useCallback(() => { api.searchFolders().then(setSearchFolders).catch(() => {}) }, [])
 
   const loadTree = useCallback(async () => {
     const d = await api.folders()
@@ -56,7 +63,7 @@ export default function MailView({ user, catMeta: catMetaProp, onOpenSettings })
     } finally { setLoading(false) }
   }, [activeFolder, conversation, search, category])
 
-  useEffect(() => { loadTree() }, [])
+  useEffect(() => { loadTree(); loadSf() }, [])
   useEffect(() => { loadEmails() }, [loadEmails])
 
 
@@ -92,6 +99,14 @@ export default function MailView({ user, catMeta: catMetaProp, onOpenSettings })
   const actCats = async (id, cats) => { await api.setCats(id, cats); loadEmails() }
   const actReadAll = async () => { const r = await api.readAll(activeFolder.id); showToast(`Đã đánh dấu ${r.marked} thư là đã đọc`); loadEmails(); loadTree() }
   const actTask = async () => { if (selected) { await api.emailToTask(selected.id); showToast('Đã tạo việc từ email — xem tab To Do') } }
+
+  const openSearchFolder = (sf) => { setActiveFolder({ id: sf.id, name: sf.name, unread: 0 }); setSelected(null) }
+  const deleteSearchFolder = async (id) => {
+    await api.deleteSearchFolder(id)
+    loadSf()
+    if (String(activeFolder?.id) === id) { const t = await api.folders(); setActiveFolder(t.tree.find(f => f.type === 'inbox') || null) }
+    loadEmails()
+  }
 
   const actSelect = async (email) => {
     setSelected(email)
@@ -157,6 +172,7 @@ export default function MailView({ user, catMeta: catMetaProp, onOpenSettings })
     ] },
     { label: 'Phân loại', icon: Tag, submenu: catSub(email) },
     { label: 'Di chuyển tới', icon: FolderInput, submenu: flatFolders.filter(f => f.id !== email.folder_id).map(f => ({ label: f.name, onClick: () => actMove(email.id, f.id) })) },
+    { label: 'Tạo quy tắc từ thư này…', icon: Zap, onClick: () => setRuleFor(email) },
     { sep: true },
     { label: 'Lưu trữ', icon: Archive, onClick: () => actArchive(email.id) },
     { label: 'Xóa', icon: Trash2, danger: true, onClick: () => actDelete(email.id) },
@@ -171,6 +187,8 @@ export default function MailView({ user, catMeta: catMetaProp, onOpenSettings })
       <Panel id="folders" defaultSize={232} minSize={180} maxSize={340} className="min-w-0">
         <FolderTree tree={tree} activeFolderId={activeFolder?.id}
           onCompose={() => setCompose({ mode: 'new' })}
+          searchFolders={searchFolders} onOpenSearchFolder={openSearchFolder}
+          onDeleteSearchFolder={deleteSearchFolder} onNewSearchFolder={() => setSfModal(true)}
           onSelect={(f) => { setActiveFolder(f); setSelected(null) }} onChanged={loadTree} />
       </Panel>
       <Separator className="mm-handle" />
@@ -220,6 +238,12 @@ export default function MailView({ user, catMeta: catMetaProp, onOpenSettings })
         />
       )}
       {ctx && <ContextMenu x={ctx.x} y={ctx.y} items={menuItems(ctx.email)} onClose={() => setCtx(null)} />}
+      {sfModal && <SearchFolderModal folders={tree} onClose={() => setSfModal(false)} onCreated={() => { loadSf() }} />}
+      {ruleFor && (
+        <RuleModal folders={tree} categories={catMeta} initial={ruleFor}
+          onClose={() => setRuleFor(null)}
+          onCreated={async () => { const r = await api.runRules(); showToast(`Đã chạy quy tắc — khớp ${r.messages_matched} thư`); loadEmails(); loadTree() }} />
+      )}
       {toast && (
         <div className="fixed bottom-10 left-1/2 -translate-x-1/2 bg-dark-surface border border-dark-border rounded-lg shadow-2xl px-4 py-2.5 flex items-center gap-3 z-[60]">
           <span className="text-sm text-ink">{toast.msg}</span>

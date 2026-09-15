@@ -4,6 +4,8 @@
 const THEME_KEY = 'mm_' + 'theme'
 const DENSITY_KEY = 'mm_' + 'density'
 const PANE_KEY = 'mm_' + 'layout'
+const FONT_KEY = 'mm_' + 'font'
+const FONTSZ_KEY = 'mm_' + 'fontsz'
 
 function safeLocal(key, fallback) {
   try {
@@ -22,6 +24,20 @@ export function getDensity() {
 }
 export function getReadingPane() {
   return safeLocal(PANE_KEY, 'right')          // 'right' | 'bottom' | 'off'
+}
+export function getComposeFont() {
+  return safeLocal(FONT_KEY, 'Calibri')        // default body font for new mail/replies
+}
+export function getComposeSize() {
+  return safeLocal(FONTSZ_KEY, '14px')         // default body size
+}
+export function setComposeFont(f) {
+  try { localStorage.setItem(FONT_KEY, f) } catch {}
+  pushToServer({ compose_font: f })
+}
+export function setComposeSize(s) {
+  try { localStorage.setItem(FONTSZ_KEY, s) } catch {}
+  pushToServer({ compose_size: s })
 }
 
 function prefersDarkMedia() {

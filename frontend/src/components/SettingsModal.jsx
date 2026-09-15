@@ -2,7 +2,9 @@ import React, { useState, useEffect, useCallback } from 'react'
 import { X, Plug, LogOut, ShieldCheck, Loader2, UserPlus, Trash2, SlidersHorizontal,
   RefreshCw, PenLine, Keyboard, Info, Sun, Moon, MonitorSmartphone, LayoutList, Mail } from 'lucide-react'
 import { api, setToken } from '../api'
-import { getTheme, setTheme, getDensity, setDensity, getReadingPane, setReadingPane } from '../theme'
+import { getTheme, setTheme, getDensity, setDensity, getReadingPane, setReadingPane,
+  getComposeFont, setComposeFont, getComposeSize, setComposeSize } from '../theme'
+import RichEditor from './RichEditor'
 
 const SECTIONS = [
   { id: 'general', label: 'Chung', icon: SlidersHorizontal },
@@ -165,12 +167,31 @@ export default function SettingsModal({ user, section = 'general', onClose, onLo
             {sec === 'signature' && settings && (
               <div className="space-y-4">
                 <h3 className="text-base font-semibold text-ink-strong">Chữ ký email</h3>
-                <p className="text-xs text-ink-mute">Tự chèn vào cuối thư khi <b className="text-ink-dim">Gửi</b> (không chèn vào bản nháp). Hỗ trợ HTML cơ bản.</p>
-                <textarea value={settings.signature || ''} rows={9}
-                  onChange={e => setSettings({ ...settings, signature: e.target.value })}
-                  onBlur={e => saveS({ signature: e.target.value })} placeholder={'Trân trọng,\nVõ Khắc Tâm\nFPT Telecom — ĐT: 09xx xxx xxx'}
-                  className="w-full bg-dark-bg border border-dark-border rounded-lg px-3.5 py-3 text-sm text-ink focus:outline-none focus:border-primary resize-none font-mono" />
-                <button onClick={() => saveS({ signature: settings.signature })} className="btn-primary text-sm">Lưu chữ ký</button>
+                <p className="text-xs text-ink-mute">Tự chèn vào cuối thư khi <b className="text-ink-dim">Gửi</b> (không chèn vào bản nháp). Soạn kiểu HTML: đậm/nghiêng/màu/phông — ảnh dán vào cũng được giữ.</p>
+                <RichEditor html={settings.signature_html || ''}
+                  onChange={h => setSettings({ ...settings, signature_html: h })}
+                  minHeight={130} placeholder={'Trân trọng,\nVõ Khắc Tâm\nFPT Telecom'} />
+                <button onClick={() => {
+                  const tmp = document.createElement('div'); tmp.innerHTML = settings.signature_html || ''
+                  saveS({ signature_html: settings.signature_html || '', signature: tmp.textContent.replace(/\s+/g, ' ').trim() })
+                  setMsg({ ok: true, text: 'Đã lưu chữ ký' })
+                }} className="btn-primary text-sm">Lưu chữ ký</button>
+                <div className="border-t border-dark-border pt-4">
+                  <h4 className="text-sm font-semibold text-ink-strong mb-1">Font mặc định khi soạn/trả lời</h4>
+                  <p className="text-xs text-ink-mute mb-3">Áp dụng cho phần nội dung thư mới, trả lời và chuyển tiếp.</p>
+                  <div className="flex gap-6">
+                    <label className="text-xs text-ink-dim">Phông
+                      <select value={getComposeFont()} onChange={e => setComposeFont(e.target.value)} className={inp + ' mt-1 block'}>
+                        {['Calibri', 'Arial', 'Times New Roman', 'Tahoma', 'Verdana', 'JetBrains Mono'].map(f => <option key={f}>{f}</option>)}
+                      </select>
+                    </label>
+                    <label className="text-xs text-ink-dim">Cỡ chữ
+                      <select value={getComposeSize()} onChange={e => setComposeSize(e.target.value)} className={inp + ' mt-1 block'}>
+                        {['12px', '13px', '14px', '16px', '18px'].map(s => <option key={s}>{s}</option>)}
+                      </select>
+                    </label>
+                  </div>
+                </div>
               </div>
             )}
 

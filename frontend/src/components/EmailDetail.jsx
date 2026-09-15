@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react'
-import { Archive, Trash2, Star, Reply, ReplyAll, Forward, Flag, CheckSquare, Paperclip, Tags, ChevronDown } from 'lucide-react'
+import { Archive, Trash2, Star, Reply, ReplyAll, Forward, Flag, CheckSquare, Paperclip, Tags, ChevronDown, Download } from 'lucide-react'
 import DOMPurify from 'dompurify'
 import { api } from '../api'
 
@@ -8,12 +8,17 @@ function fmtDate(iso) {
   return new Date(iso).toLocaleString('vi-VN', { weekday: 'short', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
 }
 
+function shortNames(s) {
+  return (s || '').split(/,(?![^<]*>)/).map(x => (x.split('<')[0].trim() || x)).filter(Boolean).slice(0, 3).join(', ')
+}
+
 export default function EmailDetail({ email, folders, onArchive, onDelete, onStar, onFlag, onMove, onCreateTask, onReply, onRefresh }) {
   // onReply(mode) — 'reply' | 'reply_all' | 'forward'
   const [catMeta, setCatMeta] = useState({ categories: [], colors: {} })
   const [full, setFull] = useState(null)
   const [showCats, setShowCats] = useState(false)
   const [showMove, setShowMove] = useState(false)
+  const [showRecips, setShowRecips] = useState(false)
 
   useEffect(() => { api.categories().then(setCatMeta).catch(() => {}) }, [])
   useEffect(() => {
@@ -108,9 +113,26 @@ export default function EmailDetail({ email, folders, onArchive, onDelete, onSta
             <div className="w-10 h-10 rounded-full bg-pa20 text-primary flex items-center justify-center font-semibold shrink-0">
               {(m.from || '?').trim()[0].toUpperCase()}
             </div>
-            <div className="min-w-0">
+            <div className="min-w-0 flex-1">
               <div className="font-medium text-ink-strong text-sm truncate">{(m.from || '').split('<')[0].trim() || m.from}</div>
-              <div className="text-xs text-ink-dim truncate">tới tôi · {fmtDate(m.date)}</div>
+              <div className="text-xs text-ink-dim truncate">
+                {fmtDate(m.date)}
+                {m.to && <> · <span className="text-ink-mute">Tới:</span> {shortNames(m.to)}</>}
+                {m.cc && <> · <span className="text-ink-mute">Cc:</span> {shortNames(m.cc)}</>}
+                {m.bcc && <> · <span className="text-ink-mute">Bcc:</span> {shortNames(m.bcc)}</>}
+              </div>
+              {(m.cc || m.bcc) && (
+                <button onClick={() => setShowRecips(v => !v)} className="text-[11px] text-primary hover:underline mt-0.5">
+                  {showRecips ? 'Ẩn người nhận' : 'Hiện chi tiết người nhận'}
+                </button>
+              )}
+              {showRecips && (
+                <div className="text-[11px] text-ink-mute mt-1 space-y-0.5 break-all">
+                  {m.to && <div><b className="text-ink-dim">Tới:</b> {m.to}</div>}
+                  {m.cc && <div><b className="text-ink-dim">Cc:</b> {m.cc}</div>}
+                  {m.bcc && <div><b className="text-ink-dim">Bcc:</b> {m.bcc}</div>}
+                </div>
+              )}
               {m.flag_due && (
                 <div className="text-xs text-primary mt-0.5 flex items-center gap-1">
                   <Flag size={10} /> Follow-up: {fmtDate(m.flag_due)}
@@ -152,7 +174,9 @@ export default function EmailDetail({ email, folders, onArchive, onDelete, onSta
             </div>
             <div className="flex flex-wrap gap-2">
               {atts.map(a => (
-                <div key={a.id} className="flex items-center gap-2 bg-dark-bg border border-dark-border rounded-md px-2.5 py-1.5">
+                <a key={a.id} href={api.attachmentUrl(m.id, a.id)} download={a.name}
+                  className="flex items-center gap-2 bg-dark-bg border border-dark-border rounded-md px-2.5 py-1.5 hover:border-primary/60"
+                  title="Tải về">
                   <div className="w-6 h-6 rounded bg-pa15 text-primary flex items-center justify-center text-[10px] font-bold uppercase">
                     {(a.name || '?').split('.').pop()}
                   </div>
@@ -160,7 +184,8 @@ export default function EmailDetail({ email, folders, onArchive, onDelete, onSta
                     <div className="text-ink">{a.name}</div>
                     <div className="text-ink-mute">{a.size ? `${Math.round(a.size / 1024)} KB` : ''}</div>
                   </div>
-                </div>
+                  <Download size={12} className="text-ink-mute" />
+                </a>
               ))}
             </div>
           </div>

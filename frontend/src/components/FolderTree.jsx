@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { ChevronDown, ChevronRight, Inbox, Send, FileText, Trash2, Archive, Folder as FolderIcon, Plus, X } from 'lucide-react'
+import { ChevronDown, ChevronRight, Inbox, Send, FileText, Trash2, Archive, Folder as FolderIcon, Plus, X, Search } from 'lucide-react'
 import { api } from '../api'
 
 const TYPE_ICON = { inbox: Inbox, sent: Send, drafts: FileText, trash: Trash2, archive: Archive }
@@ -38,7 +38,8 @@ function Node({ node, depth, activeId, onSelect, onDelete }) {
   )
 }
 
-export default function FolderTree({ tree, activeFolderId, onSelect, onChanged, onCompose }) {
+export default function FolderTree({ tree, activeFolderId, onSelect, onChanged, onCompose,
+                                      searchFolders = [], onOpenSearchFolder, onDeleteSearchFolder, onNewSearchFolder }) {
   const [adding, setAdding] = useState(false)
   const [name, setName] = useState('')
   const [inInbox, setInInbox] = useState(false)
@@ -81,6 +82,24 @@ export default function FolderTree({ tree, activeFolderId, onSelect, onChanged, 
           <Node key={n.id} node={n} depth={0} activeId={activeFolderId}
             onSelect={onSelect}
             onDelete={async (node) => { await api.deleteFolder(node.id); onChanged() }} />
+        ))}
+
+        <div className="px-3 py-1.5 mt-2 text-[11px] font-semibold uppercase tracking-wider text-ink-mute flex items-center justify-between border-t border-dark-border">
+          Search Folders
+          <button onClick={() => onNewSearchFolder && onNewSearchFolder()} className="text-ink-mute hover:text-primary" title="Tạo thư mục tìm kiếm"><Plus size={12} /></button>
+        </div>
+        {searchFolders.map(s => (
+          <div key={s.id}
+            className={`folder-item group flex items-center gap-2 pr-2 rounded-md text-sm cursor-pointer ${String(activeFolderId) === s.id ? 'active' : 'text-ink-dim'}`}
+            style={{ paddingLeft: 12 }}
+            onClick={() => onOpenSearchFolder && onOpenSearchFolder(s)}>
+            <Search size={13} className="text-violet-400" />
+            <span className="flex-1 truncate">{s.name}</span>
+            {s.count > 0 && <span className="badge-unread">{s.count}</span>}
+            <button
+              onClick={e => { e.stopPropagation(); if (confirm(`Xóa "${s.name}"?`)) onDeleteSearchFolder(s.id) }}
+              className="opacity-0 group-hover:opacity-100 text-ink-mute hover:text-red-400"><X size={12} /></button>
+          </div>
         ))}
       </div>
     </div>

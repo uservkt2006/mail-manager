@@ -195,3 +195,12 @@ body {
 .animate-spin {
   animation: spin 1s linear infinite;
 }
+
+/* Rich editor (compose) */
+.rich-editor-content:empty:before { content: attr(data-placeholder); color: var(--text-mute); pointer-events: none; }
+.rich-editor-content { line-height: 1.55; }
+.rich-editor-content a { color: var(--primary); text-decoration: underline; }
+
+/* Search-folder + rule badges in folder tree */
+.badge-search { background: rgba(139,92,246,.15); color: #a78bfa; }
+.badge-rule   { background: rgba(245,158,11,.15); color: #f59e0b; }
