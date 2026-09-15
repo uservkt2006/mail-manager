@@ -782,8 +782,13 @@ def setup(req: SetupReq):
                 (email, req.display_name, salt, pwh)).lastrowid
         for ft in SYSTEM_FOLDERS:
             get_or_create_folder(conn, user_id, ft)
-        conn.execute("""INSERT OR REPLACE INTO mail_accounts (user_id,address,password_encrypted,server_url)
-                        VALUES (?,?,?,?)""",
+        # UPSERT, never INSERT OR REPLACE: REPLACE deletes the parent row and
+        # breaks messages.account_id FK when a previous sync already stored mail.
+        conn.execute("""INSERT INTO mail_accounts (user_id,address,password_encrypted,server_url)
+                        VALUES (?,?,?,?)
+                        ON CONFLICT(user_id,address) DO UPDATE SET
+                          password_encrypted=excluded.password_encrypted,
+                          server_url=excluded.server_url""",
                      (user_id, email, encrypt_password(req.exchange_password), req.server_url))
         audit(conn, user_id, "setup", email)
         acct_row = conn.execute("SELECT * FROM mail_accounts WHERE user_id=? AND address=?",

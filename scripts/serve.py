@@ -25,7 +25,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 fwd[h] = v
         req = urllib.request.Request(BACKEND + self.path, data=body, method=method, headers=fwd)
         try:
-            with urllib.request.urlopen(req, timeout=30) as res:
+            with urllib.request.urlopen(req, timeout=300) as res:
                 payload = res.read()
                 self.send_response(res.status)
                 self.send_header("Content-Type", res.headers.get("Content-Type", "application/json"))
