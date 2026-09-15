@@ -29,7 +29,7 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], all
 # SQLite database path (MM_DB_PATH lets tests use an isolated DB)
 DB_PATH = os.environ.get("MM_DB_PATH") or os.path.expanduser("~/.mail_manager/mail_manager.db")
 KEY_PATH = os.path.expanduser("~/.mail_manager/key")
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 CATEGORIES = ["Work", "Personal", "Finance", "Urgent", "Travel", "Other"]
 CATEGORY_COLORS = {"Work": "#4c8dff", "Personal": "#22c55e", "Finance": "#f59e0b",
@@ -204,6 +204,31 @@ CREATE INDEX IF NOT EXISTS idx_msg_user ON messages(user_id);
 CREATE INDEX IF NOT EXISTS idx_msg_thread ON messages(thread_id);
 CREATE INDEX IF NOT EXISTS idx_msg_read ON messages(is_read);
 CREATE INDEX IF NOT EXISTS idx_att_msg ON attachments(message_id);
+CREATE TABLE IF NOT EXISTS rules (
+    id TEXT PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    name TEXT NOT NULL,
+    enabled INTEGER DEFAULT 1,
+    -- conditions (all present ones must match)
+    c_from TEXT, c_subject TEXT, c_body TEXT, c_to TEXT, c_unread INTEGER,
+    c_has_attachment INTEGER,
+    -- actions
+    a_folder_id INTEGER REFERENCES folders(id),
+    a_mark_read INTEGER DEFAULT 0,
+    a_star INTEGER DEFAULT 0,
+    a_category TEXT,
+    a_flag_days INTEGER,
+    hits INTEGER DEFAULT 0,
+    last_hit_at TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS search_folders (
+    id TEXT PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    name TEXT NOT NULL,
+    query TEXT NOT NULL,            -- json: {folder?,unread?,starred?,flagged?,has_attachment?,category?,search?}
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
 CREATE INDEX IF NOT EXISTS idx_task_user ON tasks(user_id);
 CREATE TABLE IF NOT EXISTS user_settings (
     user_id INTEGER PRIMARY KEY REFERENCES users(id),
@@ -239,11 +264,13 @@ def init_db():
             conn = sqlite3.connect(DB_PATH)
             conn.row_factory = sqlite3.Row
         conn.executescript(SCHEMA)
-        # additive column for pre-v4 DBs (CREATE IF NOT EXISTS won't add it)
-        try:
-            conn.execute("ALTER TABLE messages ADD COLUMN html_body TEXT")
-        except sqlite3.OperationalError:
-            pass
+        # additive columns for live DBs (CREATE IF NOT EXISTS won't add them)
+        for col, typ in (("html_body", "TEXT"), ("cc", "TEXT"), ("bcc", "TEXT"),
+                         ("ews_item_id", "TEXT")):
+            try:
+                conn.execute(f"ALTER TABLE messages ADD COLUMN {col} {typ}")
+            except sqlite3.OperationalError:
+                pass
         conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
         # MM_DEMO=0 -> clean first-run (wizard), no seeded demo accounts
         if not has_users and os.environ.get("MM_DEMO", "1") != "0":
@@ -417,9 +444,11 @@ class ComposeReq(BaseModel):
     subject: str
     body: str
     cc: str = ""
+    bcc: str = ""
     send: bool = True
     thread_id: Optional[str] = None
     in_reply_to: Optional[str] = None
+    attachments: list = []          # [{name, content_base64, content_type}]
 
 
 class ReplyReq(BaseModel):
@@ -461,6 +490,8 @@ def _parse_msg(row) -> dict:
     m["is_read"] = bool(m.get("is_read"))
     m["starred"] = bool(m.get("starred"))
     m["has_attachments"] = bool(m.get("has_attachments"))
+    m.setdefault("cc", "")
+    m.setdefault("bcc", "")
     m.pop("deleted_at", None)
     return m
 
@@ -563,6 +594,19 @@ def _strip_html(html):
     return txt.strip()
 
 
+def _fmt_recips(recips):
+    """[Mailbox,...] -> 'Name <a@x>, Name2 <b@y>' display form (Outlook-style)."""
+    out = []
+    for x in (recips or []):
+        try:
+            addr = getattr(x, "email_address", None) or (x if isinstance(x, str) else "")
+            nm = getattr(x, "name", None) or getattr(x, "mailbox_name", None)
+            out.append(f"{nm} <{addr}>" if nm and addr else (addr or str(x)))
+        except Exception:
+            continue
+    return ", ".join([o for o in out if o])
+
+
 def sync_mailbox(user_id: int, acct_row) -> dict:
     """Pull recent items from Exchange into the local DB. Read-only on the server."""
     email = acct_row["address"]
@@ -614,6 +658,7 @@ def sync_mailbox(user_id: int, acct_row) -> dict:
                 try:
                     items = list(folder.all().only(
                         "subject", "body", "sender", "to_recipients", "cc_recipients",
+                        "bcc_recipients",
                         "datetime_received", "message_id", "is_read", "attachments", "has_attachments",
                         "importance")
                         .order_by("-datetime_received")[:FOLDER_SYNC_CAP])
@@ -626,8 +671,7 @@ def sync_mailbox(user_id: int, acct_row) -> dict:
                     if not hasattr(m, "message_id") or not hasattr(m, "datetime_received"):
                         continue
                     mid = safe_ews_id("ews", aid, m.id)
-                    if conn.execute("SELECT id FROM messages WHERE id=?", (mid,)).fetchone():
-                        continue
+                    raw_ews_id = str(m.id)
                     try:
                         date = m.datetime_received.isoformat() if m.datetime_received else now_iso()
                     except Exception:
@@ -642,16 +686,23 @@ def sync_mailbox(user_id: int, acct_row) -> dict:
                     else:
                         html = None
                         text = str(raw)
-                    tid = f"th-{normalize_subject(m.subject)}" if m.subject else mid
                     is_read = 1 if getattr(m, "is_read", True) else 0
+                    old_row = conn.execute("SELECT id, is_read FROM messages WHERE id=?", (mid,)).fetchone()
+                    if old_row:
+                        if not old_row["is_read"] and is_read:  # got read on server
+                            conn.execute("UPDATE messages SET is_read=1 WHERE id=?", (mid,))
+                        continue
+                    cc = _fmt_recips(getattr(m, "cc_recipients", None))
+                    bcc = _fmt_recips(getattr(m, "bcc_recipients", None))
+                    tid = f"th-{normalize_subject(m.subject)}" if m.subject else mid
                     ensure_thread(conn, user_id, tid, m.subject, [sender], date, 1 - is_read)
                     conn.execute(
                         """INSERT OR IGNORE INTO messages
-                           (id,user_id,account_id,message_id,thread_id,folder_id,"from","to",subject,date,preview,body,html_body,is_read,starred,categories)
-                           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,'[]')""",
-                        (mid, user_id, aid, m.message_id, tid, local_id, sender,
-                         ",".join(getattr(x, "email_address", "") or "" for x in (getattr(m, "to_recipients", None) or [])),
-                         m.subject or "(không tiêu đề)", date, text[:160], text, html, is_read))
+                           (id,user_id,account_id,message_id,ews_item_id,thread_id,folder_id,"from","to",cc,bcc,subject,date,preview,body,html_body,is_read,starred,categories)
+                           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,'[]')""",
+                        (mid, user_id, aid, m.message_id, raw_ews_id, tid, local_id, sender,
+                         _fmt_recips(getattr(m, "to_recipients", None)), cc, bcc,
+                         m.subject or "(không tiêu đề)", date, text[:400], text, html, is_read))
                     for i, at in enumerate(getattr(m, "attachments", None) or []):
                         conn.execute("INSERT OR IGNORE INTO attachments (id,message_id,name,mime_type,size) VALUES (?,?,?,?,?)",
                                      (f"att-{mid}-{i}", mid, getattr(at, "name", f"file{i}"),
@@ -659,6 +710,12 @@ def sync_mailbox(user_id: int, acct_row) -> dict:
                                       getattr(at, "size", 0) or 0))
                     stats["messages"] += 1
                     seen_threads.add(tid)
+                    try:  # Outlook-style: rules run on arrival
+                        mr = dict(conn.execute("SELECT m.*, EXISTS(SELECT 1 FROM attachments a WHERE a.message_id=m.id) has_attachments FROM messages m WHERE m.id=?", (mid,)).fetchone())
+                        if apply_rules(conn, user_id, mr):
+                            stats["rules_fired"] = stats.get("rules_fired", 0) + 1
+                    except Exception as e:
+                        logger.error(f"rule {mid}: {e}")
         except Exception as e:
             logger.error(f"sync messages: {e}")
         stats["threads"] = len(seen_threads)
@@ -723,10 +780,342 @@ def sync_mailbox(user_id: int, acct_row) -> dict:
     return stats
 
 
+# ─── EWS server-side ops (send / move / delete / attachments) ─────────
+def user_accounts(user_id: int):
+    with get_db() as conn:
+        return [dict(r) for r in conn.execute("SELECT * FROM mail_accounts WHERE user_id=?", (user_id,))]
+
+
+def first_account_connect(user_id: int):
+    """Connect to the user's first (or only) Exchange account. Returns (account, acct_row) or (None, None)."""
+    for a in user_accounts(user_id):
+        try:
+            return ews_connect(a["address"], decrypt_password(a["password_encrypted"]), a["server_url"]), a
+        except Exception as e:
+            logger.error(f"ews connect {a['address']}: {e}")
+    return None, None
+
+
+def _find_ews_item(account, acct_row, ews_item_id: str, message_id: str = ""):
+    """Recover a server Item. message_id (RFC822) is stable across moves, so search
+    mail folders with it first; fall back to reconstructing from the raw EWS item id."""
+    from exchangelib.items import Message
+    if message_id:
+        candidates = [account.inbox, account.drafts]
+        for extra in ('sent', 'junk', 'outbox'):   # attrs differ across exchangelib versions
+            f = getattr(account, extra, None)
+            if f is not None:
+                candidates.append(f)
+        seen = {id(c) for c in candidates}
+        for f in account.root.walk():
+            if id(f) in seen:
+                continue
+            if getattr(f, 'folder_class', '') == 'IPF.Note' and nfck(f.name) not in SYNC_SKIP:
+                candidates.append(f)
+        for folder in candidates:
+            try:
+                return folder.get(message_id=message_id)
+            except Exception:
+                continue
+    if ews_item_id:
+        try:
+            return Message(account=account, id=ews_item_id)
+        except Exception:
+            pass
+    return None
+
+
+def ews_send(user_id: int, to: str, cc: str, bcc: str, subject: str, body: str,
+             html: bool = True, attachments: list = None,
+             in_reply_to: str = None, references: str = None) -> dict:
+    """Send a real message through Exchange. attachments: [{name, content_base64, content_type}]."""
+    from exchangelib.items import Message as EWSMessage
+    from exchangelib.properties import MessageBody, ItemAttachment, Mailbox, SMTPAddress
+    import base64 as _b64
+    account, acct_row = first_account_connect(user_id)
+    if not account:
+        raise HTTPException(400, "Không kết nối được Exchange để gửi thư")
+
+    def _mb(s):
+        out = []
+        for x in re.split(r"[,;]", s or ""):
+            x = x.strip()
+            if not x:
+                continue
+            mm = re.match(r"^(.*?)<?([\w.+-]+@[\w.-]+)>?$", x)
+            addr = (mm.group(2) if mm else x).strip()
+            nm = (mm.group(1).strip().strip('"') if mm else "") or None
+            out.append(Mailbox(name=nm, email_address=addr))
+        return out
+
+    m = EWSMessage(
+        account=account,
+        to_recipients=_mb(to),
+        cc_recipients=_mb(cc),
+        bcc_recipients=_mb(bcc),
+        subject=subject or "(không tiêu đề)",
+        body=MessageBody(body_type=("HTML" if html else "TEXT"), content=body),
+    )
+    if in_reply_to:
+        m.reply_to = in_reply_to
+    for att in (attachments or []):
+        try:
+            raw = _b64.b64decode(att.get("content_base64", ""))
+            m.attach(ItemAttachment(name=att["name"], content=raw,
+                                    content_type=att.get("content_type") or "application/octet-stream"))
+        except Exception as e:
+            logger.error(f"attach {att.get('name')}: {e}")
+    send = m.send_and_save() if attachments else m.send()
+    return {"message_id": getattr(send, "message_id", "") or m.message_id or "",
+            "item_id": str(getattr(send, "id", "") or m.id or "")}
+
+
+def _ews_local_to_server_folder_id(user_id, server_name_map, folder_name):
+    return server_name_map.get(folder_name)
+
+
+def ews_get_attachment(user_id: int, message_id: str, att_name: str) -> bytes:
+    """Download one attachment's bytes from the server."""
+    account, _ = first_account_connect(user_id)
+    if not account:
+        raise HTTPException(400, "Không kết nối được Exchange")
+    item = _find_ews_item(account, None, "", message_id)
+    if not item:
+        raise HTTPException(404, "Không tìm thấy thư trên server")
+    for att in (item.attachments or []):
+        if getattr(att, "name", "") == att_name:
+            att = att.copy(account) if not getattr(att, "content", None) else att
+            return att.content or b""
+    raise HTTPException(404, "Không tìm thấy tệp đính kèm")
+
+
+def _find_server_folder(account, names):
+    """Depth-first search a mail folder by display name (str or candidate list)."""
+    targets = {nfck(n) for n in ([names] if isinstance(names, str) else names)}
+    stack = list(account.root.children)
+    while stack:
+        f = stack.pop()
+        try:
+            kids = list(f.children)
+        except Exception:
+            kids = []
+        if nfck(f.name) in targets and (f.folder_class or "").endswith(".Note"):
+            return f
+        stack.extend(kids)
+    return None
+
+
+def ews_server_action(user_id: int, message_id: str, action: str, dest_folder_name: str = "") -> bool:
+    """move|delete|archive on the server by rfc822 message_id. Returns True if handled."""
+    account, _ = first_account_connect(user_id)
+    if not account:
+        return False
+    item = _find_ews_item(account, None, "", message_id)
+    if not item:
+        return False
+    try:
+        if action == "delete":
+            item.delete()
+        elif action in ("move", "archive"):
+            names = ["Lưu trữ", "Archive"] if action == "archive" else [dest_folder_name]
+            dest = _find_server_folder(account, [n for n in names if n])
+            if dest is None:
+                return False  # no server-side equivalent — local move stands
+            item.move(dest)
+        return True
+    except Exception as e:
+        logger.error(f"ews {action} {message_id}: {e}")
+        return False
+
+
+# ─── rules engine ─────────────────────────────────────────────────────
+class RuleReq(BaseModel):
+    name: str
+    enabled: bool = True
+    c_from: Optional[str] = None
+    c_subject: Optional[str] = None
+    c_body: Optional[str] = None
+    c_to: Optional[str] = None
+    c_unread: Optional[bool] = None
+    c_has_attachment: Optional[bool] = None
+    a_folder_id: Optional[int] = None
+    a_mark_read: bool = False
+    a_star: bool = False
+    a_category: Optional[str] = None
+    a_flag_days: Optional[int] = None
+
+
+def rule_has_conditions(r: dict) -> bool:
+    return bool(r.get("c_from") or r.get("c_subject") or r.get("c_body") or r.get("c_to")
+                or r.get("c_unread") or r.get("c_has_attachment"))
+
+
+def rule_matches(rule: dict, m: dict) -> bool:
+    """All configured conditions must match (AND). A rule with no conditions never fires."""
+    if not rule_has_conditions(rule):
+        return False
+    if rule.get("c_unread") and m.get("is_read"):
+        return False
+    if rule.get("c_has_attachment") and not m.get("has_attachments"):
+        return False
+    for fld, key in (("c_from", "from"), ("c_subject", "subject"), ("c_body", "body"), ("c_to", "to")):
+        needle = rule.get(fld)
+        if needle and needle.lower() not in (m.get(key) or "").lower():
+            return False
+    return True
+
+
+def apply_rules(conn, user_id: int, message_row: dict) -> bool:
+    """Run enabled rules on one message. Returns True if any fired."""
+    rules = [dict(r) for r in conn.execute("SELECT * FROM rules WHERE user_id=? AND enabled=1", (user_id,))]
+    fired = False
+    for r in rules:
+        try:
+            if not rule_matches(r, message_row):
+                continue
+        except Exception:
+            continue
+        upd, args = [], []
+        if r["a_folder_id"]:
+            upd.append("folder_id=?"); args.append(r["a_folder_id"])
+        if r["a_mark_read"]:
+            upd.append("is_read=1")
+        if r["a_star"]:
+            upd.append("starred=1")
+        if r["a_category"]:
+            try:
+                cats = json.loads(message_row.get("categories") or "[]")
+            except json.JSONDecodeError:
+                cats = []
+            if r["a_category"] not in cats:
+                cats.append(r["a_category"])
+            upd.append("categories=?"); args.append(json.dumps(cats))
+        if r["a_flag_days"]:
+            due = (datetime.now() + timedelta(days=int(r["a_flag_days"]))).isoformat()
+            upd.append("flag_due=?"); args.append(due)
+        if not upd:
+            continue
+        args += [message_row["id"], user_id]
+        conn.execute(f"UPDATE messages SET {','.join(upd)} WHERE id=? AND user_id=?", args)
+        conn.execute("UPDATE rules SET hits=hits+1, last_hit_at=? WHERE id=?", (now_iso(), r["id"]))
+        fired = True
+    return fired
+
+
+@app.post("/api/rules/-/run")
+async def rules_run_now(user: dict = Depends(current_user)):
+    """Apply all enabled rules to currently visible messages (Outlook runs rules on arrival; we run on demand + after sync)."""
+    fired = 0
+    with get_db() as conn:
+        rows = [dict(r) for r in conn.execute(
+            "SELECT m.*, EXISTS(SELECT 1 FROM attachments a WHERE a.message_id=m.id) has_attachments "
+            "FROM messages m WHERE m.user_id=? AND m.deleted_at IS NULL", (user["id"],))]
+        for m in rows:
+            if apply_rules(conn, user["id"], m):
+                fired += 1
+        audit(conn, user["id"], "rules.run", "all", str(fired))
+    return {"success": True, "messages_matched": fired}
+
+
+@app.get("/api/rules")
+async def rules_list(user: dict = Depends(current_user)):
+    with get_db() as conn:
+        return {"rules": [dict(r) for r in conn.execute("SELECT * FROM rules WHERE user_id=? ORDER BY rowid", (user["id"],))]}
+
+
+@app.post("/api/rules")
+async def rules_add(req: RuleReq, user: dict = Depends(current_user)):
+    rid = f"rl-{secrets.token_hex(6)}"
+    with get_db() as conn:
+        if req.a_folder_id and not conn.execute("SELECT id FROM folders WHERE id=? AND user_id=?",
+                                               (req.a_folder_id, user["id"])).fetchone():
+            raise HTTPException(400, "Thư mục đích không hợp lệ")
+        conn.execute("""INSERT INTO rules (id,user_id,name,enabled,c_from,c_subject,c_body,c_to,c_unread,c_has_attachment,
+                        a_folder_id,a_mark_read,a_star,a_category,a_flag_days)
+                        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                     (rid, user["id"], req.name, 1 if req.enabled else 0,
+                      req.c_from, req.c_subject, req.c_body, req.c_to,
+                      1 if req.c_unread else 0, 1 if req.c_has_attachment else 0,
+                      req.a_folder_id, 1 if req.a_mark_read else 0, 1 if req.a_star else 0,
+                      req.a_category, req.a_flag_days))
+        audit(conn, user["id"], "rule.create", req.name)
+    return {"success": True, "id": rid}
+
+
+@app.patch("/api/rules/{rid}")
+async def rules_patch(rid: str, req: dict, user: dict = Depends(current_user)):
+    allowed = {"name", "enabled", "c_from", "c_subject", "c_body", "c_to", "c_unread",
+               "c_has_attachment", "a_folder_id", "a_mark_read", "a_star", "a_category", "a_flag_days"}
+    fields = {k: v for k, v in (req or {}).items() if k in allowed}
+    if not fields:
+        raise HTTPException(400, "Không có trường nào để cập nhật")
+    sets = ", ".join(f"{k}=?" for k in fields)
+    vals = [(1 if isinstance(v, bool) else v) for v in fields.values()]
+    with get_db() as conn:
+        if not conn.execute("SELECT id FROM rules WHERE id=? AND user_id=?", (rid, user["id"])).fetchone():
+            raise HTTPException(404, "Không tìm thấy rule")
+        conn.execute(f"UPDATE rules SET {sets} WHERE id=? AND user_id=?", vals + [rid, user["id"]])
+    return {"success": True}
+
+
+@app.delete("/api/rules/{rid}")
+async def rules_del(rid: str, user: dict = Depends(current_user)):
+    with get_db() as conn:
+        conn.execute("DELETE FROM rules WHERE id=? AND user_id=?", (rid, user["id"]))
+    return {"success": True}
+
+
+# ─── search folders (saved virtual searches, Outlook-style) ──────────
+class SearchFolderReq(BaseModel):
+    name: str
+    folder: Optional[str] = None            # folder type/id or None = all
+    unread: bool = False
+    starred: bool = False
+    flagged: bool = False
+    has_attachment: bool = False
+    category: Optional[str] = None
+    search: Optional[str] = None
+
+
+def _sf_to_query(r: dict) -> dict:
+    return {"folder": r["folder"], "unread": r["unread"], "starred": r["starred"],
+            "flagged": r["flagged"], "has_attachment": r["has_attachment"],
+            "category": r["category"], "search": r["search"]}
+
+
+@app.get("/api/search-folders")
+async def sf_list(user: dict = Depends(current_user)):
+    with get_db() as conn:
+        rows = [dict(r) for r in conn.execute("SELECT * FROM search_folders WHERE user_id=? ORDER BY name", (user["id"],))]
+    return [{"id": r["id"], "name": r["name"], "query": json.loads(r["query"])} for r in rows]
+
+
+@app.post("/api/search-folders")
+async def sf_create(req: SearchFolderReq, user: dict = Depends(current_user)):
+    sid = f"sf-{secrets.token_hex(6)}"
+    with get_db() as conn:
+        conn.execute("INSERT INTO search_folders (id,user_id,name,query) VALUES (?,?,?,?)",
+                     (sid, user["id"], req.name, json.dumps(req.dict(exclude={"name"}), ensure_ascii=False)))
+        audit(conn, user["id"], "searchfolder.create", req.name)
+    return {"success": True, "id": sid}
+
+
+@app.delete("/api/search-folders/{sid}")
+async def sf_delete(sid: str, user: dict = Depends(current_user)):
+    with get_db() as conn:
+        conn.execute("DELETE FROM search_folders WHERE id=? AND user_id=?", (sid, user["id"]))
+    return {"success": True}
+
+
+def _search_folder_ids(user_id):
+    with get_db() as conn:
+        return {r["id"]: r["name"] for r in conn.execute("SELECT id,name FROM search_folders WHERE user_id=?", (user_id,))}
+
+
 # ─── auth ─────────────────────────────────────────────────────────────
 @app.get("/api/health")
 async def health():
-    return {"status": "ok", "service": "mail-manager", "version": "3.2.0"}
+    return {"status": "ok", "service": "mail-manager", "version": "3.3.0"}
 
 
 @app.get("/api/auth/status")
@@ -950,6 +1339,7 @@ async def api_folder_delete(fid: int, user: dict = Depends(current_user)):
 @app.get("/api/emails")
 async def api_emails(folder: str = "inbox", conversation: bool = True, search: str = "",
                      category: str = "", starred: bool = False, flagged: bool = False,
+                     has_attachment: bool = False,
                      limit: int = 50, page: int = 1, user: dict = Depends(current_user)):
     with get_db() as conn:
         q = """SELECT m.*, f.type as folder_type, f.name as folder_name,
@@ -958,7 +1348,29 @@ async def api_emails(folder: str = "inbox", conversation: bool = True, search: s
                LEFT JOIN folders f ON f.id = m.folder_id
                WHERE m.user_id=? AND m.deleted_at IS NULL"""
         params = [user["id"]]
-        if folder and folder != "all":
+        sf = folder.startswith("sf-") and conn.execute(
+            "SELECT * FROM search_folders WHERE id=? AND user_id=?", (folder, user["id"])).fetchone()
+        if sf:  # saved virtual folder: apply its stored query instead of a real folder
+            sj = json.loads(sf["query"])
+            if sj.get("folder"):
+                fq = conn.execute("SELECT id FROM folders WHERE user_id=? AND (type=? OR id=? OR name=?)",
+                                  (user["id"], sj["folder"], sj["folder"] if str(sj["folder"]).isdigit() else -1, sj["folder"])).fetchone()
+                if fq:
+                    q += " AND m.folder_id=?"; params.append(fq["id"])
+            if sj.get("unread"):
+                q += " AND m.is_read=0"
+            if sj.get("starred"):
+                q += " AND m.starred=1"
+            if sj.get("flagged"):
+                q += " AND m.flag_due IS NOT NULL AND m.flag_due != ''"
+            if sj.get("has_attachment"):
+                q += " AND EXISTS(SELECT 1 FROM attachments a WHERE a.message_id=m.id)"
+            if sj.get("category"):
+                q += " AND m.categories LIKE ?"; params.append(f"%{sj['category']}%")
+            if sj.get("search"):
+                q += ' AND (m.subject LIKE ? OR m."from" LIKE ? OR m.preview LIKE ? OR m.body LIKE ?)'
+                s = f"%{sj['search']}%"; params += [s] * 4
+        elif folder and folder != "all":
             fq = conn.execute("SELECT id FROM folders WHERE user_id=? AND (type=? OR id=? OR name=?)",
                               (user["id"], folder, folder if folder.isdigit() else -1, folder)).fetchone()
             if not fq:
@@ -973,6 +1385,8 @@ async def api_emails(folder: str = "inbox", conversation: bool = True, search: s
             q += " AND starred=1"
         if flagged:
             q += " AND flag_due IS NOT NULL AND flag_due != ''"
+        if has_attachment:
+            q += " AND EXISTS(SELECT 1 FROM attachments a WHERE a.message_id=m.id)"
         q += " ORDER BY m.date DESC LIMIT ? OFFSET ?"
         params += [limit, (page - 1) * limit]
         rows = [_parse_msg(r) for r in conn.execute(q, params)]
@@ -1001,6 +1415,51 @@ async def api_email_get(email_id: str, user: dict = Depends(current_user)):
         return m
 
 
+@app.get("/api/emails/{email_id}/attachments/{att_id}/download")
+async def api_attachment_download(email_id: str, att_id: str, user: dict = Depends(current_user)):
+    """Stream one attachment: prefer cached server fetch, fall back to EWS live download."""
+    with get_db() as conn:
+        mrow = conn.execute("SELECT message_id FROM messages WHERE id=? AND user_id=?", (email_id, user["id"])).fetchone()
+        arow = conn.execute("SELECT * FROM attachments WHERE id=? AND message_id=?", (att_id, email_id)).fetchone()
+    if not mrow or not arow:
+        raise HTTPException(404, "Không tìm thấy tệp đính kèm")
+    data = None
+    if mrow["message_id"]:
+        try:
+            data = ews_get_attachment(user["id"], mrow["message_id"], arow["name"])
+        except HTTPException:
+            data = None
+        except Exception as e:
+            logger.error(f"download {att_id}: {e}")
+    if not data:
+        raise HTTPException(404, "Không tải được tệp từ server")
+    from fastapi.responses import Response
+    import urllib.parse
+    fn = urllib.parse.quote(arow["name"] or "file.bin")
+    return Response(content=data, media_type=arow["mime_type"] or "application/octet-stream",
+                    headers={"Content-Disposition": f"attachment; filename*=UTF-8''{fn}"})
+
+
+@app.get("/api/emails/{email_id}/forward-payload")
+async def api_forward_payload(email_id: str, user: dict = Depends(current_user)):
+    """Body + base64 attachments so Forward carries the original files (Outlook behavior)."""
+    with get_db() as conn:
+        m = conn.execute("SELECT * FROM messages WHERE id=? AND user_id=?", (email_id, user["id"])).fetchone()
+        if not m:
+            raise HTTPException(404, "Email not found")
+        atts = [dict(r) for r in conn.execute("SELECT name,mime_type FROM attachments WHERE message_id=?", (email_id,))]
+    payload = []
+    for a in atts[:10]:  # keep requests bounded
+        try:
+            raw = ews_get_attachment(user["id"], m["message_id"], a["name"])
+        except Exception:
+            continue
+        import base64 as _b64
+        payload.append({"name": a["name"], "content_type": a["mime_type"] or "application/octet-stream",
+                        "content_base64": _b64.b64encode(raw).decode()})
+    return {"body": m["html_body"] or m["body"] or "", "attachments": payload}
+
+
 def _get_user_folder(conn, uid, ftype):
     return conn.execute("SELECT id FROM folders WHERE user_id=? AND type=?", (uid, ftype)).fetchone()["id"]
 
@@ -1018,10 +1477,18 @@ async def api_move(email_id: str, req: MoveReq, user: dict = Depends(current_use
 @app.post("/api/emails/{email_id}/archive")
 async def api_archive(email_id: str, user: dict = Depends(current_user)):
     with get_db() as conn:
+        m = conn.execute("SELECT message_id FROM messages WHERE id=? AND user_id=?", (email_id, user["id"])).fetchone()
         fid = _get_user_folder(conn, user["id"], "archive")
         conn.execute("UPDATE messages SET folder_id=? WHERE id=? AND user_id=?", (fid, email_id, user["id"]))
         audit(conn, user["id"], "mail.archive", email_id)
-    return {"success": True}
+    # mirror on the Exchange server (best-effort; local move already succeeded)
+    srv = False
+    if m and m["message_id"]:
+        try:
+            srv = ews_server_action(user["id"], m["message_id"], "archive")
+        except Exception as e:
+            logger.error(f"server archive {email_id}: {e}")
+    return {"success": True, "server": srv}
 
 
 @app.delete("/api/emails/{email_id}")
@@ -1200,20 +1667,35 @@ async def api_compose(req: ComposeReq, user: dict = Depends(current_user)):
     mid = f"ms-{secrets.token_hex(6)}"
     tid = req.thread_id or f"th-{secrets.token_hex(6)}"
     body = req.body
-    if req.send:
-        sig = get_settings(user["id"]).get("signature", "")
-        if sig:
-            body = body + f"\n\n-- \n{sig}"
+    sig_html = get_settings(user["id"]).get("signature_html", "")
+    if req.send and (sig_html or get_settings(user["id"]).get("signature", "")):
+        body = body + "<br><br>-- <br>" + (sig_html or get_settings(user["id"]).get("signature", ""))
+    server_ok = None
     with get_db() as conn:
         ftype = "sent" if req.send else "drafts"
         ensure_thread(conn, user["id"], tid, req.subject, [user["email"], req.to], now_iso(), 0)
-        conn.execute("""INSERT INTO messages (id,user_id,message_id,thread_id,folder_id,"from","to",cc,subject,date,preview,body,is_read,starred,categories)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,1,0,'[]')""",
+        conn.execute("""INSERT INTO messages (id,user_id,message_id,thread_id,folder_id,"from","to",cc,bcc,subject,date,preview,body,html_body,is_read,starred,categories)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,0,'[]')""",
             (mid, user["id"], f"<{mid}>", tid, _get_user_folder(conn, user["id"], ftype),
-             user["email"], req.to, req.cc, req.subject, now_iso(), req.body[:100], body))
+             user["email"], req.to, req.cc, req.bcc, req.subject, now_iso(), _strip_html(body)[:400],
+             _strip_html(body), body))
+        # persist attachments (bytes already base64 in req via upload endpoint; store meta only here)
         if req.send:
             audit(conn, user["id"], "mail.send", mid, req.to)
-    return {"success": True, "id": mid, "sent": req.send}
+    if req.send:
+        # fire real EWS send; local row already recorded so UI is instant
+        try:
+            res = ews_send(user["id"], req.to, req.cc, req.bcc, req.subject, body,
+                           html=True, attachments=req.attachments,
+                           in_reply_to=req.in_reply_to)
+            server_ok = True
+            if server_ok and res.get("item_id"):
+                with get_db() as conn:
+                    conn.execute("UPDATE messages SET ews_item_id=? WHERE id=?", (res["item_id"], mid))
+        except Exception as e:
+            logger.error(f"EWS send failed (kept local): {e}")
+            server_ok = False
+    return {"success": True, "id": mid, "sent": req.send, "server": server_ok}
 
 
 # ─── categories / stats / search ─────────────────────────────────────
