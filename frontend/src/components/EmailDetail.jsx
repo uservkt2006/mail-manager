@@ -25,7 +25,7 @@ export default function EmailDetail({ email, folders, onArchive, onDelete, onSta
 
   if (!email) {
     return (
-      <div className="flex-1 flex items-center justify-center bg-dark-bg text-ink-mute">
+      <div className="w-full h-full flex items-center justify-center bg-dark-bg text-ink-mute">
         <div className="text-center">
           <Archive size={44} className="mx-auto mb-3 opacity-25" />
           <p className="text-sm">Chọn một thư để đọc tại đây</p>
@@ -50,7 +50,7 @@ export default function EmailDetail({ email, folders, onArchive, onDelete, onSta
   }
 
   return (
-    <div className="flex-1 bg-dark-bg flex flex-col overflow-hidden min-w-0">
+    <div className="w-full h-full bg-dark-bg flex flex-col overflow-hidden min-w-0">
       {/* contextual toolbar */}
       <div className="h-11 flex-shrink-0 border-b border-dark-border flex items-center gap-1 px-3">
         <button onClick={() => onReply('reply')} className="btn-secondary text-xs flex items-center gap-1.5 py-1.5">

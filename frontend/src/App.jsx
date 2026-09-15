@@ -16,6 +16,7 @@ export default function App() {
   const [booting, setBooting] = useState(true)
   const [module, setModule] = useState('mail')
   const [showSettings, setShowSettings] = useState(false)
+  const [settingsSection, setSettingsSection] = useState('general')
   const [setupNeeded, setSetupNeeded] = useState(false)
   const [hasAccount, setHasAccount] = useState(false)
   const [online, setOnline] = useState(true)
@@ -51,6 +52,19 @@ export default function App() {
     }
   }, [])
 
+  useEffect(() => {
+    if (!user) return
+    const onKey = (e) => {
+      if (['INPUT', 'TEXTAREA'].includes(e.target.tagName) || e.target.isContentEditable) return
+      if (e.key === '?') { e.preventDefault(); setSettingsSection('shortcuts'); setShowSettings(true) }
+      else if (e.key.toLowerCase() === 'n' && !e.ctrlKey && !e.metaKey) {
+        e.preventDefault(); window.dispatchEvent(new Event('mm-new-mail'))
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [user])
+
   if (booting) {
     return <div className="h-screen flex items-center justify-center bg-dark-bg text-ink-mute text-sm">Đang tải…</div>
   }
@@ -75,10 +89,10 @@ export default function App() {
           {module === 'calendar' && <CalendarView />}
           {module === 'people' && <PeopleView />}
           {module === 'tasks' && <TasksView />}
-          <StatusBar online={online} itemInfo="" hasAccount={hasAccount} />
+          <StatusBar online={online} itemInfo="" hasAccount={hasAccount} onRefresh={() => window.dispatchEvent(new Event('mm-synced'))} />
         </div>
       </div>
-      {showSettings && <SettingsModal user={user} onClose={() => setShowSettings(false)} onLogout={logout} />}
+      {showSettings && <SettingsModal user={user} section={settingsSection} onClose={() => setShowSettings(false)} onLogout={logout} />}
     </div>
   )
 }

@@ -460,6 +460,7 @@ def _parse_msg(row) -> dict:
         m["categories"] = []
     m["is_read"] = bool(m.get("is_read"))
     m["starred"] = bool(m.get("starred"))
+    m["has_attachments"] = bool(m.get("has_attachments"))
     m.pop("deleted_at", None)
     return m
 
@@ -946,7 +947,9 @@ async def api_emails(folder: str = "inbox", conversation: bool = True, search: s
                      category: str = "", starred: bool = False, flagged: bool = False,
                      limit: int = 50, page: int = 1, user: dict = Depends(current_user)):
     with get_db() as conn:
-        q = """SELECT m.*, f.type as folder_type, f.name as folder_name FROM messages m
+        q = """SELECT m.*, f.type as folder_type, f.name as folder_name,
+                      EXISTS(SELECT 1 FROM attachments a WHERE a.message_id = m.id) as has_attachments
+               FROM messages m
                LEFT JOIN folders f ON f.id = m.folder_id
                WHERE m.user_id=? AND m.deleted_at IS NULL"""
         params = [user["id"]]
@@ -1061,6 +1064,19 @@ async def api_read(email_id: str, req: ReadReq, user: dict = Depends(current_use
         conn.execute("UPDATE messages SET is_read=? WHERE id=? AND user_id=?",
                      (1 if req.is_read else 0, email_id, user["id"]))
     return {"success": True}
+
+
+@app.post("/api/emails/-/read-all")
+async def api_read_all(folder: str = "inbox", user: dict = Depends(current_user)):
+    with get_db() as conn:
+        fq = conn.execute("SELECT id FROM folders WHERE user_id=? AND (type=? OR name=?)",
+                          (user["id"], folder, folder)).fetchone()
+        if not fq:
+            raise HTTPException(404, "Folder not found")
+        n = conn.execute("UPDATE messages SET is_read=1 WHERE user_id=? AND folder_id=? AND is_read=0 AND deleted_at IS NULL",
+                         (user["id"], fq["id"])).rowcount
+        audit(conn, user["id"], "mail.read_all", folder, str(n))
+    return {"success": True, "marked": n}
 
 
 @app.put("/api/emails/{email_id}/categories")

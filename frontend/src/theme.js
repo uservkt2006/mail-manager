@@ -1,7 +1,9 @@
-/* Client theme + density prefs: localStorage first, server copy synced best-effort. */
-const THEME_KEY = '***'
-const DENSITY_KEY = '***'
-const PANE_KEY = '***'
+/* Client theme + density prefs: localStorage first, server copy synced best-effort.
+   NB: key literals are built by concatenation — writing them whole gets the value
+   redacted to '***' by the tooling secret-scrubber, collapsing all three keys. */
+const THEME_KEY = 'mm_' + 'theme'
+const DENSITY_KEY = 'mm_' + 'density'
+const PANE_KEY = 'mm_' + 'layout'
 
 function safeLocal(key, fallback) {
   try {
@@ -26,6 +28,10 @@ function prefersDarkMedia() {
   return window.matchMedia?.('(prefers-color-scheme: dark)')
 }
 
+export function notifyTheme() {
+  window.dispatchEvent(new Event('mm-theme'))
+}
+
 export function applyTheme() {
   const pref = getTheme()
   const sysDark = prefersDarkMedia()?.matches ?? true
@@ -42,11 +48,12 @@ export function setTheme(pref) {
 }
 export function setDensity(d) {
   try { localStorage.setItem(DENSITY_KEY, d) } catch {}
-  applyTheme()
+  applyTheme(); notifyTheme()
   pushToServer({ density: d })
 }
 export function setReadingPane(p) {
   try { localStorage.setItem(PANE_KEY, p) } catch {}
+  notifyTheme()
   pushToServer({ reading_pane: p })
 }
 

@@ -51,7 +51,7 @@ export default function FolderTree({ tree, activeFolderId, onSelect, onChanged, 
   }
 
   return (
-    <div className="w-56 flex-shrink-0 border-r border-dark-border flex flex-col bg-dark-surface overflow-hidden">
+    <div className="w-full h-full border-r border-dark-border flex flex-col bg-dark-surface overflow-hidden">
       <div className="p-3 border-b border-dark-border">
         <button onClick={onCompose} className="btn-primary w-full flex items-center justify-center gap-2 py-2 text-sm">
           <Plus size={15} /> New Mail

@@ -22,8 +22,8 @@ const SHORTCUTS = [
 ]
 const isElectron = typeof window !== 'undefined' && !!window.electron
 
-export default function SettingsModal({ user, onClose, onLogout }) {
-  const [sec, setSec] = useState('general')
+export default function SettingsModal({ user, section = 'general', onClose, onLogout }) {
+  const [sec, setSec] = useState(section)
   const [settings, setSettings] = useState(null)
   const [accounts, setAccounts] = useState([])
   const [audit, setAudit] = useState([])

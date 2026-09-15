@@ -48,6 +48,7 @@ export const api = {
   star: (id) => req('POST', `/emails/${id}/star`),
   flag: (id, due) => req('POST', `/emails/${id}/flag`, { due }),
   markRead: (id, is_read) => req('PUT', `/emails/${id}/read`, { is_read }),
+  readAll: (folder) => req('POST', `/emails/-/read-all?folder=${folder}`),
   categories: () => req('GET', '/categories'),
   setCats: (id, cats) => req('PUT', `/emails/${id}/categories`, { categories: cats }),
   emailToTask: (id) => req('POST', `/emails/${id}/task`),
