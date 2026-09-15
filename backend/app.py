@@ -23,7 +23,7 @@ logging.basicConfig(level=logging.INFO)
 logging.getLogger("exchangelib").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="Mail Manager", version="3.0.0")
+app = FastAPI(title="Mail Manager", version="3.2.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 # SQLite database path (MM_DB_PATH lets tests use an isolated DB)
@@ -726,7 +726,7 @@ def sync_mailbox(user_id: int, acct_row) -> dict:
 # ─── auth ─────────────────────────────────────────────────────────────
 @app.get("/api/health")
 async def health():
-    return {"status": "ok", "service": "mail-manager", "version": "3.1.0"}
+    return {"status": "ok", "service": "mail-manager", "version": "3.2.0"}
 
 
 @app.get("/api/auth/status")
