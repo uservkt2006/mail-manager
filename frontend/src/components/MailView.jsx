@@ -7,6 +7,7 @@ import ContextMenu from './ContextMenu'
 import ReadingModal from './ReadingModal'
 import SearchFolderModal from './SearchFolderModal'
 import RuleModal from './RuleModal'
+import ThreadView from './ThreadView'
 import { Group, Panel, Separator, useDefaultLayout } from 'react-resizable-panels'
 import { Archive, Trash2, Star, Mail, MailOpen, Flag, Tag, Share2, CornerUpLeft, CornerUpRight, FolderInput, CheckCheck, Zap } from 'lucide-react'
 import { api } from '../api'
@@ -28,6 +29,8 @@ export default function MailView({ user, catMeta: catMetaProp, onOpenSettings })
   const [searchFolders, setSearchFolders] = useState([])
   const [sfModal, setSfModal] = useState(false)
   const [ruleFor, setRuleFor] = useState(null)   // email used to prefill a new rule
+  const [ruleFolder, setRuleFolder] = useState(null)  // folder targeted by "create rule for this folder"
+  const [threadView, setThreadView] = useState(false)   // conversation mode in reading pane
   const [readModal, setReadModal] = useState(false)
   const outerLayout = useDefaultLayout({ id: 'mm-mail', storage: window.localStorage, panelIds: ['folders', 'main'] })
   const innerLayout = useDefaultLayout({ id: 'mm-main', storage: window.localStorage, panelIds: ['list', 'detail'] })
@@ -70,10 +73,15 @@ export default function MailView({ user, catMeta: catMetaProp, onOpenSettings })
   useEffect(() => {
     const bump = () => { setDensity(getDensity()); setPane(getReadingPane()); loadEmails(); loadTree() }
     const newMail = () => setCompose({ mode: 'new' })
+    const ruleForFolder = (e) => setRuleFolder(e.detail)
     window.addEventListener('mm-theme', bump)
     window.addEventListener('mm-synced', bump)
     window.addEventListener('mm-new-mail', newMail)
-    return () => { window.removeEventListener('mm-theme', bump); window.removeEventListener('mm-synced', bump); window.removeEventListener('mm-new-mail', newMail) }
+    window.addEventListener('mm-rule-for-folder', ruleForFolder)
+    return () => {
+      window.removeEventListener('mm-theme', bump); window.removeEventListener('mm-synced', bump)
+      window.removeEventListener('mm-new-mail', newMail); window.removeEventListener('mm-rule-for-folder', ruleForFolder)
+    }
   }, [loadEmails, loadTree])
 
   const actArchive = async (id) => {
@@ -212,6 +220,16 @@ export default function MailView({ user, catMeta: catMetaProp, onOpenSettings })
           {pane !== 'off' && <>
             <Separator className={pane === 'bottom' ? 'mm-handle mm-handle-h' : 'mm-handle'} />
             <Panel id="detail" minSize={pane === 'bottom' ? '25%' : 300} className="min-w-0 min-h-0">
+              {selected && (conversation || threadView) && selected.thread_id ? (
+                <ThreadView
+                  key={selected.thread_id}
+                  threadId={selected.thread_id}
+                  folders={tree}
+                  onArchive={actArchive} onDelete={actDelete} onStar={actStar}
+                  onReply={(mode, m) => setCompose({ replyTo: m || selected, mode })}
+                  onEmailOpen={() => pane === 'off' && setReadModal(true)}
+                />
+              ) : (
               <EmailDetail
                 email={selected} folders={tree}
                 onArchive={actArchive} onDelete={actDelete} onStar={actStar} onFlag={actFlag}
@@ -219,6 +237,7 @@ export default function MailView({ user, catMeta: catMetaProp, onOpenSettings })
                 onReply={(mode) => setCompose({ replyTo: selected, mode })}
                 onRefresh={() => { loadEmails(); loadTree() }}
               />
+              )}
             </Panel>
           </>}
         </Group>
@@ -243,6 +262,11 @@ export default function MailView({ user, catMeta: catMetaProp, onOpenSettings })
         <RuleModal folders={tree} categories={catMeta} initial={ruleFor}
           onClose={() => setRuleFor(null)}
           onCreated={async () => { const r = await api.runRules(); showToast(`Đã chạy quy tắc — khớp ${r.messages_matched} thư`); loadEmails(); loadTree() }} />
+      )}
+      {ruleFolder && (
+        <RuleModal folders={tree} categories={catMeta} targetFolder={ruleFolder}
+          onClose={() => setRuleFolder(null)}
+          onCreated={async () => { setRuleFolder(null); const r = await api.runRules(); showToast(`Đã tạo quy tắc — khớp ${r.messages_matched} thư`); loadEmails(); loadTree() }} />
       )}
       {toast && (
         <div className="fixed bottom-10 left-1/2 -translate-x-1/2 bg-dark-surface border border-dark-border rounded-lg shadow-2xl px-4 py-2.5 flex items-center gap-3 z-[60]">

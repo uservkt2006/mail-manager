@@ -3,12 +3,15 @@ import { X, Zap } from 'lucide-react'
 import { api } from '../api'
 
 /* Outlook-style rule builder: IF <conditions> THEN <actions>. All conditions AND. */
-export default function RuleModal({ folders, categories, initial, onClose, onCreated }) {
+export default function RuleModal({ folders, categories, initial, targetFolder, onClose, onCreated }) {
   const flat = []
   ;(function walk(ns) { for (const n of ns || []) { flat.push(n); walk(n.children) } })(folders)
-  const [name, setName] = useState(initial ? `Quy tắc: ${(initial.from || '').split('<')[0].trim()}` : '')
-  const [c, setC] = useState({ c_from: initial ? (initial.from || '').split('<')[0].trim() : '', c_subject: '', c_body: '', c_to: '', c_unread: false, c_has_attachment: false })
-  const [a, setA] = useState({ a_folder_id: '', a_mark_read: false, a_star: false, a_category: '', a_flag_days: '' })
+  const [name, setName] = useState(
+    targetFolder ? `Quy tắc → ${targetFolder.name}` : initial ? `Quy tắc: ${(initial.from || '').split('<')[0].trim()}` : '')
+  const [c, setC] = useState(initial
+    ? { c_from: (initial.from || '').split('<')[0].trim(), c_subject: '', c_body: '', c_to: '', c_unread: false, c_has_attachment: false }
+    : { c_from: '', c_subject: '', c_body: '', c_to: '', c_unread: false, c_has_attachment: false })
+  const [a, setA] = useState({ a_folder_id: targetFolder ? String(targetFolder.id) : '', a_mark_read: false, a_star: false, a_category: '', a_flag_days: '' })
 
   const save = async () => {
     if (!name.trim()) return

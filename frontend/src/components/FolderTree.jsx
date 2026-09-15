@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { ChevronDown, ChevronRight, Inbox, Send, FileText, Trash2, Archive, Folder as FolderIcon, Plus, X, Search, PenLine, LayerGroup, FolderPlus } from 'lucide-react'
+import { ChevronDown, ChevronRight, Inbox, Send, FileText, Trash2, Archive, Folder as FolderIcon, Plus, X, Search, PenLine, FolderPlus, MailOpen, Zap } from 'lucide-react'
 import { api } from '../api'
 import ContextMenu from './ContextMenu'
 
@@ -64,6 +64,12 @@ export default function FolderTree({ tree, activeFolderId, onSelect, onChanged, 
     out.push({ label: 'Tạo thư mục con…', icon: FolderPlus, onClick: () => setAddingWithParent(node) })
     if (isUser) {
       out.push({ sep: true })
+      out.push({ label: 'Đánh dấu tất cả đã đọc', icon: MailOpen, onClick: async () => {
+        const r = await api.markFolderRead(node.id)
+        onChanged?.()
+        window.dispatchEvent(new Event('mm-synced'))
+      } })
+      out.push({ label: 'Chuyển thư mục này vào… (quy tắc)', icon: Zap, onClick: () => window.dispatchEvent(new CustomEvent('mm-rule-for-folder', { detail: node })) })
       out.push({ label: 'Đổi tên…', icon: PenLine, onClick: () => rename(node) })
       out.push({ label: 'Xóa tất cả thư trong này', icon: Trash2, danger: true,
         onClick: async () => {

@@ -41,6 +41,8 @@ export const api = {
   createSubfolder: (parentId, name) => req('POST', '/folders', { name, parent_id: parentId }),
   renameFolder: (id, name) => req('PUT', `/folders/${id}`, { name }),
   emptyFolder: (id) => req('POST', `/folders/${id}/empty`),
+  markFolderRead: (id) => req('POST', `/folders/${id}/read`),
+  thread: (tid) => req('GET', `/thread?tid=${encodeURIComponent(tid)}`),
   realtimeSet: (enabled) => req('POST', '/realtime', { enabled }),
   deleteFolder: (id) => req('DELETE', `/folders/${id}`),
   emails: (params) => req('GET', '/emails?' + params),

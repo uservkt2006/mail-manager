@@ -659,10 +659,19 @@ def ews_connect(email: str, password: str, server_url: str):
 
 
 def _strip_html(html):
-    txt = re.sub(r'<[^>]+>', ' ', html or '')
-    txt = re.sub(r'&nbsp;?', ' ', txt)
-    txt = re.sub(r'[ \t]{2,}', ' ', txt)
-    return txt.strip()
+    # drop non-content blocks FIRST — Outlook injects <style>/<xml> (VML/mso) whose
+    # CSS text leaks into previews if we strip tags blindly
+    t = re.sub(r'<(style|xml|script)[^>]*>.*?</\1>', ' ', html or '', flags=re.S | re.I)
+    t = re.sub(r'<!--.*?-->', ' ', t, flags=re.S)
+    t = re.sub(r'<br[^>]*>', '\n', t, flags=re.I)
+    t = re.sub(r'<[^>]+>', ' ', t)
+    import html as _html
+    t = _html.unescape(t)
+    t = re.sub(r'&nbsp;?', ' ', t)
+    t = re.sub(r'[ \t]{2,}', ' ', t)
+    # collapse lines and keep first real text (skip leading blank/CSS leftovers)
+    lines = [ln.strip() for ln in t.splitlines()]
+    return ' '.join(ln for ln in lines if ln).strip()
 
 
 def store_ews_message(conn, user_id, aid, local_id, m):
@@ -1736,6 +1745,66 @@ async def api_email_get(email_id: str, user: dict = Depends(current_user)):
     if was_unread and row["message_id"]:
         _server_set_read_async(user["id"], row["message_id"], True)
     return m
+
+
+@app.get("/api/thread")
+async def api_thread(tid: str, user: dict = Depends(current_user)):
+    """Full conversation: every message in the thread, oldest first, all marked read."""
+    with get_db() as conn:
+        rows = [_parse_msg(r) for r in conn.execute(
+            """SELECT m.*, EXISTS(SELECT 1 FROM attachments a WHERE a.message_id=m.id) has_attachments
+               FROM messages m WHERE m.user_id=? AND m.thread_id=? AND m.deleted_at IS NULL
+               ORDER BY m.date ASC""", (user["id"], tid))]
+        newly = [m for m in rows if not m["is_read"]]
+        conn.execute("UPDATE messages SET is_read=1 WHERE user_id=? AND thread_id=? AND is_read=0",
+                     (user["id"], tid))
+        for m in rows:
+            m["attachments"] = [dict(r) for r in conn.execute(
+                "SELECT id,name,mime_type,size FROM attachments WHERE message_id=? AND is_inline=0", (m["id"],))]
+    # hydrate + mirror empty bodies quietly in the background
+    def bg(u=user["id"], items=list(rows)):
+        for m in items:
+            if not (m["body"] or m["html_body"]):
+                try:
+                    _hydrate_message(u, m["id"])
+                    m["hydrated"] = True
+                except Exception:
+                    pass
+    threading.Thread(target=bg, daemon=True).start()
+    for m in newly:
+        if m.get("message_id"):
+            _server_set_read_async(user["id"], m["message_id"], True)
+    return {"thread_id": tid, "messages": rows}
+
+
+@app.post("/api/folders/{fid}/read")
+async def api_folder_mark_read(fid: int, user: dict = Depends(current_user)):
+    """Mark every message in a folder (incl. subfolders) as read — right-click menu."""
+    with get_db() as conn:
+        if not conn.execute("SELECT id FROM folders WHERE id=? AND user_id=?", (fid, user["id"])).fetchone():
+            raise HTTPException(404, "Không tìm thấy thư mục")
+        ids = [fid]
+        frontier = [fid]
+        while frontier:
+            kids = [r["id"] for r in conn.execute(
+                "SELECT id FROM folders WHERE parent_id IN (%s)" % ",".join("?" * len(frontier),), frontier)]
+            ids += kids
+            frontier = kids
+        n = conn.execute("UPDATE messages SET is_read=1 WHERE user_id=? AND folder_id IN (%s) AND is_read=0 AND deleted_at IS NULL"
+                         % ",".join("?" * len(ids)), [user["id"]] + ids).rowcount
+        mids = [r["message_id"] for r in conn.execute(
+            "SELECT message_id FROM messages WHERE user_id=? AND folder_id IN (%s) AND deleted_at IS NULL AND message_id IS NOT NULL"
+            % ",".join("?" * len(ids)), [user["id"]] + ids)]
+        audit(conn, user["id"], "mail.read_all_folder", str(fid), str(n))
+    def work(uid=user["id"], items=mids[:300]):
+        for mid in items:
+            try:
+                _server_set_read_async(uid, mid, True)
+                time.sleep(0.2)
+            except Exception:
+                break
+    threading.Thread(target=work, daemon=True).start()
+    return {"success": True, "marked": n}
 
 
 @app.get("/api/emails/{email_id}/cid/{cid}")
