@@ -32,19 +32,23 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(payload)
             return
-        self.send_response(200)
-        self.send_header("Content-Type", "text/event-stream")
-        self.send_header("Cache-Control", "no-cache")
-        self.send_header("X-Accel-Buffering", "no")
-        self.send_header("Transfer-Encoding", "chunked")
-        self.end_headers()
+        try:
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.send_header("Cache-Control", "no-cache")
+            self.send_header("X-Accel-Buffering", "no")
+            self.send_header("Transfer-Encoding", "chunked")
+            self.end_headers()
+        except Exception as e:
+            print(f"[sse] header write failed: {e!r}", file=sys.stderr, flush=True)
+            return
         try:
             for line in resp:                      # yields as SSE frames arrive
                 chunk = b"%x\r\n%s\r\n" % (len(line), line)
                 self.wfile.write(chunk)
                 self.wfile.flush()
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[sse] stream ended: {e!r}", file=sys.stderr, flush=True)
         finally:
             try:
                 self.wfile.write(b"0\r\n\r\n")
@@ -85,7 +89,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.wfile.write(payload)
 
     def do_GET(self):
-        if self.path.startswith("/api/events"):
+        if self.path.startswith("/api/realtime/stream"):
             self._stream_proxy()
         elif self.path.startswith("/api"):
             self._proxy("GET")

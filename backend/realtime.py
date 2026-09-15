@@ -265,17 +265,35 @@ def _delta_pass(user_id, cached=None):
 
 
 def _loop(user_id, stop):
+    from app import get_settings
     err_streak = 0
     cached = {}
     while not stop.is_set():
         if stop.wait(min(POLL_SECONDS * (2 ** min(err_streak, 4)), 120)):
             break
+        if err_streak:
+            cached.clear()      # after a failure, force a fresh EWS connection
         try:
             _delta_pass(user_id, cached)
             err_streak = 0
         except Exception as e:
             err_streak += 1
             logger.error(f"realtime {user_id}: {type(e).__name__} {e}")
+        # deep sync (calendar/contacts + folder tree) every sync_interval_min minutes
+        try:
+            interval = max(int(get_settings(user_id).get("sync_interval_min") or 5), 1) * 60
+        except Exception:
+            interval = 300
+        if time.time() - cached.get("deep_ts", 0) >= interval:
+            cached["deep_ts"] = time.time()
+            try:
+                from app import user_accounts, sync_mailbox
+                accts = user_accounts(user_id)
+                if accts:
+                    cached.pop("by_name", None)   # folder tree may have changed on server
+                    sync_mailbox(user_id, accts[0])
+            except Exception as e:
+                logger.error(f"deep sync {user_id}: {e}")
 
 
 def ensure_worker(user_id):

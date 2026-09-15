@@ -12,9 +12,9 @@ function createWindow() {
     minWidth: 900,
     minHeight: 600,
     backgroundColor: '#0c0e12',
-    titleBarStyle: 'hiddenInset',
-    trafficLightPosition: { x: 16, y: 16 },
-    frame: false,
+    ...(process.platform === 'darwin'
+      ? { titleBarStyle: 'hiddenInset', trafficLightPosition: { x: 16, y: 16 }, frame: false }
+      : { autoHideMenuBar: true }),   // Linux/Win: normal frame so the window stays movable
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
@@ -27,15 +27,16 @@ function createWindow() {
   
   if (isDev) {
     // Start backend
-    const pythonPath = process.platform === 'win32' 
-      ? path.join(__dirname, '..', '.venv', 'Scripts', 'python.exe')
-      : path.join(__dirname, '..', 'backend', '.venv', 'bin', 'python')
-    
-    const backendScript = path.join(__dirname, '..', 'backend', 'app.py')
-    
+    const pythonPath = process.platform === 'win32'
+      ? path.join(__dirname, '..', '..', '.venv', 'Scripts', 'python.exe')
+      : path.join(__dirname, '..', '..', 'backend', '.venv', 'bin', 'python')
+
+    const backendScript = path.join(__dirname, '..', '..', 'backend', 'app.py')
+
     backendProcess = spawn(pythonPath, [backendScript], {
-      cwd: path.join(__dirname, '..', 'backend'),
-      stdio: 'ignore'
+      cwd: path.join(__dirname, '..', '..', 'backend'),
+      stdio: 'ignore',
+      env: { ...process.env, MM_DEMO: '0' }
     })
     
     backendProcess.on('error', (err) => console.error('Backend error:', err))
@@ -43,7 +44,6 @@ function createWindow() {
     // Wait for backend to be ready
     setTimeout(() => {
       mainWindow.loadURL('http://localhost:5173')
-      if (isDev) mainWindow.webContents.openDevTools()
     }, 2000)
   } else {
     mainWindow.loadFile(path.join(__dirname, '..', 'dist', 'index.html'))

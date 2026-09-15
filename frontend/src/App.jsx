@@ -24,15 +24,43 @@ export default function App() {
 
   useEffect(() => {
     if (!user) { return }
-    let es, closed = false
+    let es = null
+    let pollTimer = null
+    let lastTs = Date.now() / 1000
+    let sseDead = false
+    const startPoll = () => {
+      if (pollTimer) return
+      pollTimer = setInterval(async () => {
+        try {
+          const r = await fetch(`/api/realtime/poll?since=${lastTs}`)
+          const d = await r.json()
+          if (d.events?.length) {
+            lastTs = d.server_ts || lastTs
+            setRt(d.events[d.events.length - 1])
+          }
+        } catch { /* offline */ }
+      }, 8000)
+    }
     try {
-      es = new EventSource(`/api/events?token=${encodeURIComponent(localStorage.getItem('mm_' + 'token') || '')}`)
+      es = new EventSource(`/api/realtime/stream?token=${encodeURIComponent(localStorage.getItem('mm_' + 'token') || '')}`)
       es.onmessage = (e) => {
-        try { setRt(JSON.parse(e.data)) } catch { /* comment frames */ }
+        sseDead = false
+        try {
+          const ev = JSON.parse(e.data)
+          ev.ts && (lastTs = ev.ts)
+          setRt(ev)
+        } catch { /* comment frames */ }
       }
-      es.onerror = () => { /* browser auto-reconnects; keep state */ }
-    } catch { /* offline */ }
-    return () => { closed = true; es && es.close() }
+      es.onerror = () => {          // tunnel/proxy may not carry SSE — fall back to polling
+        sseDead = true
+        startPoll()
+      }
+      setTimeout(() => { if (sseDead) startPoll() }, 1000)   // quick fallback through broken proxies
+    } catch { startPoll() }
+    return () => {
+      es && es.close()
+      pollTimer && clearInterval(pollTimer)
+    }
   }, [user])
 
   // auto-refresh mail views when realtime reports new/changed items

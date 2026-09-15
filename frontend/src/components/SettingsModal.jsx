@@ -146,12 +146,14 @@ export default function SettingsModal({ user, section = 'general', onClose, onLo
             {sec === 'sync' && settings && (
               <div className="space-y-5">
                 <h3 className="text-base font-semibold text-ink-strong">Đồng bộ Exchange</h3>
-                <Toggle label="Tự động đồng bộ" hint={`Kiểm tra hộp thư mới mỗi ${settings.sync_interval_min || 5} phút khi app mở`}
-                  checked={!!settings.autosync} onChange={v => saveS({ autosync: v })} />
-                <Row label="Khoảng đồng bộ (phút)">
-                  <Segment options={[['2', '2'], ['5', '5'], ['10', '10'], ['30', '30']].map(([v, l]) => [Number(v), l])}
-                    value={settings.sync_interval_min || 5} onChange={v => saveS({ sync_interval_min: v })} />
-                </Row>
+                <Toggle label="Tự động đồng bộ" hint={`Mail mới tự xuất hiện sau vài giây (delta sync Exchange); khi bật, kiểm tra thêm lịch & danh bạ mỗi ${settings.sync_interval_min || 5} phút`}
+                  checked={!!settings.autosync} onChange={v => { saveS({ autosync: v }); api.realtimeSet(v).catch(() => {}) }} />
+                {settings.autosync && (
+                  <Row label="Khoảng đồng bộ sâu (phút)" hint="Lịch & danh bạ — mail đã realtime riêng">
+                    <Segment options={[['2', '2'], ['5', '5'], ['10', '10'], ['30', '30']].map(([v, l]) => [Number(v), l])}
+                      value={settings.sync_interval_min || 5} onChange={v => saveS({ sync_interval_min: v })} />
+                  </Row>
+                )}
                 {renderMsg(msg)}
                 <button onClick={doSync} disabled={busy || accounts.length === 0}
                   className="btn-secondary text-sm w-full py-2 flex items-center justify-center gap-2 disabled:opacity-40">

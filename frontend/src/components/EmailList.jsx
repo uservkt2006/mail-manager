@@ -86,6 +86,8 @@ export default function EmailList({
               const cats = Array.isArray(email.categories) ? email.categories : []
               return (
                 <div key={email.id}
+                  draggable
+                  onDragStart={e => { e.dataTransfer.setData('text/mm-mail-id', email.id); e.dataTransfer.effectAllowed = 'move' }}
                   onClick={() => onEmailSelect(email)}
                   onDoubleClick={() => onEmailOpen?.(email)}
                   onContextMenu={e => { e.preventDefault(); onContext?.(email, e.clientX, e.clientY) }}

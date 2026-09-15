@@ -16,6 +16,7 @@ import re
 import sqlite3
 import hashlib
 import secrets
+import threading
 from datetime import datetime, timedelta
 from contextlib import contextmanager
 
@@ -29,7 +30,7 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], all
 # SQLite database path (MM_DB_PATH lets tests use an isolated DB)
 DB_PATH = os.environ.get("MM_DB_PATH") or os.path.expanduser("~/.mail_manager/mail_manager.db")
 KEY_PATH = os.path.expanduser("~/.mail_manager/key")
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 CATEGORIES = ["Work", "Personal", "Finance", "Urgent", "Travel", "Other"]
 CATEGORY_COLORS = {"Work": "#4c8dff", "Personal": "#22c55e", "Finance": "#f59e0b",
@@ -177,7 +178,8 @@ CREATE TABLE IF NOT EXISTS attachments (
     id TEXT PRIMARY KEY,
     message_id TEXT REFERENCES messages(id),
     name TEXT, mime_type TEXT, size INTEGER,
-    storage_ref TEXT, scan_state TEXT DEFAULT 'pending'
+    storage_ref TEXT, scan_state TEXT DEFAULT 'pending',
+    content_id TEXT, is_inline INTEGER DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS contacts (
     id TEXT PRIMARY KEY,
@@ -316,6 +318,11 @@ def init_db():
                 conn.execute(f"ALTER TABLE messages ADD COLUMN {col} {typ}")
             except sqlite3.OperationalError:
                 pass
+        for col, typ in (("content_id", "TEXT"), ("is_inline", "INTEGER DEFAULT 0")):
+            try:
+                conn.execute(f"ALTER TABLE attachments ADD COLUMN {col} {typ}")
+            except sqlite3.OperationalError:
+                pass
         conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
         # MM_DEMO=0 -> clean first-run (wizard), no seeded demo accounts
         if not has_users and os.environ.get("MM_DEMO", "1") != "0":
@@ -450,11 +457,19 @@ def seed(conn):
 init_db()
 
 # realtime: resume delta-sync workers on boot for users that have an Exchange account
+# and haven't disabled "Tự động đồng bộ"
 try:
     import realtime as _rt
     with get_db() as _c:
         for _u in _c.execute("SELECT DISTINCT user_id FROM mail_accounts").fetchall():
-            _rt.ensure_worker(_u["user_id"])
+            _st = _c.execute("SELECT json FROM user_settings WHERE user_id=?", (_u["user_id"],)).fetchone()
+            _on = True
+            try:
+                _on = json.loads(_st["json"]).get("autosync", True) if _st else True
+            except Exception:
+                pass
+            if _on:
+                _rt.ensure_worker(_u["user_id"])
 except Exception as _e:
     logging.getLogger(__name__).warning(f"realtime boot skipped: {_e}")
 
@@ -479,6 +494,7 @@ class CategoryUpdate(BaseModel):
 class FolderCreate(BaseModel):
     name: str
     parent_type: Optional[str] = None
+    parent_id: Optional[int] = None
 
 
 class MoveReq(BaseModel):
@@ -686,10 +702,12 @@ def store_ews_message(conn, user_id, aid, local_id, m):
          _fmt_recips(getattr(m, "to_recipients", None)), cc, bcc,
          m.subject or "(không tiêu đề)", date, text[:400], text, html, is_read))
     for i, at in enumerate(getattr(m, "attachments", None) or []):
-        conn.execute("INSERT OR IGNORE INTO attachments (id,message_id,name,mime_type,size) VALUES (?,?,?,?,?)",
+        conn.execute("INSERT OR IGNORE INTO attachments (id,message_id,name,mime_type,size,content_id,is_inline) VALUES (?,?,?,?,?,?,?)",
                      (f"att-{mid}-{i}", mid, getattr(at, "name", f"file{i}"),
                       str(getattr(at, "content_type", "application/octet-stream")),
-                      getattr(at, "size", 0) or 0))
+                      getattr(at, "size", 0) or 0,
+                      getattr(at, "content_id", None) or None,
+                      1 if getattr(at, "is_inline", False) else 0))
     try:  # Outlook-style: rules run on arrival
         mr = dict(conn.execute("SELECT m.*, EXISTS(SELECT 1 FROM attachments a WHERE a.message_id=m.id) has_attachments FROM messages m WHERE m.id=?", (mid,)).fetchone())
         apply_rules(conn, user_id, mr)
@@ -1361,7 +1379,7 @@ class SettingsReq(BaseModel):
 
 DEFAULT_SETTINGS = {"theme": "dark", "density": "comfortable", "reading_pane": "right",
                     "signature": "", "signature_html": "", "compose_font": "Calibri",
-                    "compose_size": "14px", "autosync": False, "sync_interval_min": 5,
+                    "compose_size": "14px", "autosync": True, "sync_interval_min": 5,
                     "default_reply_all": False}
 
 
@@ -1403,12 +1421,90 @@ async def api_folders(user: dict = Depends(current_user)):
 async def api_folder_create(req: FolderCreate, user: dict = Depends(current_user)):
     with get_db() as conn:
         parent = None
-        if req.parent_type:
+        parent_name = None
+        if req.parent_id:
+            pr = conn.execute("SELECT id,name FROM folders WHERE id=? AND user_id=?", (req.parent_id, user["id"])).fetchone()
+            parent = pr["id"] if pr else None
+            parent_name = pr["name"] if pr else None
+        elif req.parent_type:
             pr = conn.execute("SELECT id FROM folders WHERE user_id=? AND type=?", (user["id"], req.parent_type)).fetchone()
             parent = pr["id"] if pr else None
+            parent_name = SYSTEM_FOLDERS.get(req.parent_type, "Hộp thư đến")
         get_or_create_folder(conn, user["id"], "user", req.name, parent)
         audit(conn, user["id"], "folder.create", req.name)
-    return {"success": True}
+    # create on Exchange too, under the same-named server parent (best-effort)
+    srv = False
+    try:
+        account, _ = first_account_connect(user["id"])
+        if account:
+            sf = _find_server_folder(account, [parent_name]) if parent_name else account.inbox
+            if sf is not None:
+                from exchangelib.folders import Folder
+                Folder(parent=sf, account=account, name=nfck(req.name)).create()
+                srv = True
+    except Exception as e:
+        logger.error(f"server folder create {req.name}: {e}")
+    return {"success": True, "server": srv}
+
+
+class FolderRename(BaseModel):
+    name: str
+
+
+@app.put("/api/folders/{fid}")
+async def api_folder_rename(fid: int, req: FolderRename, user: dict = Depends(current_user)):
+    new = nfck(req.name)
+    if not new:
+        raise HTTPException(400, "Tên rỗng")
+    with get_db() as conn:
+        f = conn.execute("SELECT * FROM folders WHERE id=? AND user_id=?", (fid, user["id"])).fetchone()
+        if not f:
+            raise HTTPException(404, "Không tìm thấy thư mục")
+        conn.execute("UPDATE folders SET name=? WHERE id=?", (new, fid))
+        audit(conn, user["id"], "folder.rename", str(fid), new)
+    # rename the folder on Exchange too, if it exists there
+    srv = False
+    try:
+        acc = first_account_connect(user["id"])
+        if acc[0]:
+            sf = _find_server_folder(acc[0], [f["name"]])
+            if sf is not None:
+                sf.name = new
+                sf.update()
+                srv = True
+    except Exception as e:
+        logger.error(f"server rename {fid}: {e}")
+    return {"success": True, "server": srv}
+
+
+@app.post("/api/folders/{fid}/empty")
+async def api_folder_empty(fid: int, user: dict = Depends(current_user)):
+    """Delete every message inside (server-side delete too — Outlook 'Empty Folder')."""
+    with get_db() as conn:
+        f = conn.execute("SELECT id FROM folders WHERE id=? AND user_id=?", (fid, user["id"])).fetchone()
+        if not f:
+            raise HTTPException(404, "Không tìm thấy thư mục")
+        rows = conn.execute("SELECT message_id FROM messages WHERE folder_id=? AND user_id=? AND deleted_at IS NULL",
+                            (fid, user["id"])).fetchall()
+        mids = [r["message_id"] for r in rows if r["message_id"]]
+        conn.execute("UPDATE messages SET deleted_at=?, folder_id=? WHERE folder_id=? AND user_id=? AND deleted_at IS NULL",
+                     (now_iso(), get_or_create_folder(conn, user["id"], "trash"), fid, user["id"]))
+        audit(conn, user["id"], "folder.empty", str(fid), str(len(mids)))
+    srv_n = 0
+    try:
+        account, _ = first_account_connect(user["id"])
+        if account:
+            for mid in mids[:200]:
+                try:
+                    item = _find_ews_item(account, None, "", mid)
+                    if item:
+                        item.delete()
+                        srv_n += 1
+                except Exception:
+                    pass
+    except Exception as e:
+        logger.error(f"folder empty server: {e}")
+    return {"success": True, "moved_local": len(rows), "deleted_server": srv_n}
 
 
 @app.delete("/api/folders/{fid}")
@@ -1422,7 +1518,18 @@ async def api_folder_delete(fid: int, user: dict = Depends(current_user)):
         conn.execute("UPDATE messages SET folder_id=? WHERE folder_id=? AND user_id=?",
                      (f["parent_id"] or get_or_create_folder(conn, user["id"], "inbox"), fid, user["id"]))
         conn.execute("DELETE FROM folders WHERE id=?", (fid,))
-    return {"success": True}
+    # mirror the delete on Exchange (moves to server's Deleted Items)
+    srv = False
+    try:
+        account, _ = first_account_connect(user["id"])
+        if account:
+            sf = _find_server_folder(account, [f["name"]])
+            if sf is not None:
+                sf.delete()
+                srv = True
+    except Exception as e:
+        logger.error(f"server folder delete {fid}: {e}")
+    return {"success": True, "server": srv}
 
 
 # ─── emails ───────────────────────────────────────────────────────────
@@ -1491,23 +1598,170 @@ async def api_emails(folder: str = "inbox", conversation: bool = True, search: s
         return {"emails": rows, "total": len(rows), "conversation": False}
 
 
+def _find_item_in_folder_by_id(account, conn, folder_id, message_id):
+    """Fast targeted lookup: local folder name -> server folder, one get() call
+    instead of walking the whole tree."""
+    try:
+        fr = conn.execute("SELECT name FROM folders WHERE id=?", (folder_id,)).fetchone()
+        if fr:
+            sf = _find_server_folder(account, [fr["name"]])
+            if sf is not None:
+                return sf.get(message_id=message_id)
+    except Exception:
+        pass
+    return None
+
+
+def _server_set_read_async(user_id, message_id, is_read):
+    """Fire-and-forget read-state mirror: opening a mail never blocks on EWS."""
+    def work():
+        try:
+            account, _ = first_account_connect(user_id)
+            if not account:
+                return
+            fid = None
+            with get_db() as conn:
+                row = conn.execute("SELECT folder_id FROM messages WHERE user_id=? AND message_id=?",
+                                   (user_id, message_id)).fetchone()
+                fid = row["folder_id"] if row else None
+            item = None
+            if fid:
+                with get_db() as conn:
+                    item = _find_item_in_folder_by_id(account, conn, fid, message_id)
+            if item is None:
+                item = _find_ews_item(account, None, "", message_id)
+            if item is not None:
+                item.is_read = is_read
+                item.save(update_fields=["is_read"])
+        except Exception as e:
+            logger.debug(f"async set_read: {e}")
+    threading.Thread(target=work, daemon=True).start()
+
+
+def _hydrate_message(user_id, email_id):
+    """Delta-sync can store items with empty bodies (SyncFolderItems ID_ONLY shape).
+    When opening such a row, fetch the full item from Exchange once and fill it in."""
+    with get_db() as conn:
+        row = conn.execute("SELECT message_id, folder_id, body, html_body FROM messages WHERE id=? AND user_id=?",
+                           (email_id, user_id)).fetchone()
+    if not row or row["body"] or row["html_body"]:
+        return
+    if not row["message_id"]:
+        return
+    account, _ = first_account_connect(user_id)
+    if not account:
+        return
+    item = _find_item_in_folder_by_id(account, _conn_readonly(), row["folder_id"], row["message_id"])
+    if item is None:
+        item = _find_ews_item(account, None, "", row["message_id"])
+    if item is None:
+        return
+    raw = item.body if item.body is not None else ""
+    from exchangelib.properties import HTMLBody as _HTMLB
+    if isinstance(raw, _HTMLB) or (isinstance(raw, str) and raw.lstrip()[:5].lower() == "<html"):
+        html = str(raw)
+        text = _strip_html(html)
+    else:
+        html, text = None, str(raw)
+    with get_db() as conn:
+        conn.execute("UPDATE messages SET body=?, html_body=?, preview=? WHERE id=? AND user_id=? AND (body='' OR body IS NULL)",
+                     (text, html, text[:400], email_id, user_id))
+        # (re)record attachments with content_id now that we have the full item
+        for i, at in enumerate(getattr(item, "attachments", None) or []):
+            conn.execute("INSERT OR IGNORE INTO attachments (id,message_id,name,mime_type,size,content_id,is_inline) VALUES (?,?,?,?,?,?,?)",
+                         (f"att-{email_id}-{i}", email_id, getattr(at, "name", f"file{i}"),
+                          str(getattr(at, "content_type", "application/octet-stream")),
+                          getattr(at, "size", 0) or 0,
+                          getattr(at, "content_id", None) or None,
+                          1 if getattr(at, "is_inline", False) else 0))
+            # rows stored by delta-sync before content_id existed: backfill by name
+            cid_v = getattr(at, "content_id", None) or None
+            if cid_v:
+                conn.execute("UPDATE attachments SET content_id=?, is_inline=? WHERE message_id=? AND name=? AND content_id IS NULL",
+                             (cid_v, 1 if getattr(at, "is_inline", False) else 0, email_id, getattr(at, "name", "")))
+    logger.info(f"hydrated {email_id} body={len(text)}")
+
+
+def _conn_readonly():
+    c = sqlite3.connect(DB_PATH, timeout=30)
+    c.row_factory = sqlite3.Row
+    c.execute("PRAGMA busy_timeout = 30000")
+    return c
+
+
 @app.get("/api/emails/{email_id}")
 async def api_email_get(email_id: str, user: dict = Depends(current_user)):
     with get_db() as conn:
         row = conn.execute("SELECT * FROM messages WHERE id=? AND user_id=?", (email_id, user["id"])).fetchone()
         if not row:
             raise HTTPException(404, "Email not found")
+        was_unread = not row["is_read"]
         conn.execute("UPDATE messages SET is_read=1 WHERE id=?", (email_id,))
-        if not row["is_read"] and row["message_id"]:
-            try:
-                ews_set_read(user["id"], row["message_id"], True)
-            except Exception as e:
-                logger.error(f"open-mark-read {email_id}: {e}")
+        empty = not (row["body"] or row["html_body"])
+    if empty:
+        try:
+            _hydrate_message(user["id"], email_id)
+        except Exception as e:
+            logger.error(f"hydrate {email_id}: {e}")
+    with get_db() as conn:
+        row = conn.execute("SELECT * FROM messages WHERE id=?", (email_id,)).fetchone()
         m = _parse_msg(row)
         m["is_read"] = True
+        # Outlook: inline (cid:) images belong to the body, not the attachment chips
         m["attachments"] = [dict(r) for r in conn.execute(
-            "SELECT id,name,mime_type,size,scan_state FROM attachments WHERE message_id=?", (email_id,))]
-        return m
+            "SELECT id,name,mime_type,size,scan_state FROM attachments WHERE message_id=? AND is_inline=0", (email_id,))]
+    if was_unread and row["message_id"]:
+        _server_set_read_async(user["id"], row["message_id"], True)
+    return m
+
+
+@app.get("/api/emails/{email_id}/cid/{cid}")
+async def api_cid_image(email_id: str, cid: str, user: dict = Depends(current_user_q)):
+    """Serve an inline (cid:) image from Exchange, cached on disk so it loads once."""
+    import hashlib
+    from fastapi.responses import FileResponse
+    with get_db() as conn:
+        arow = conn.execute("SELECT name,mime_type FROM attachments WHERE message_id=? AND content_id=?",
+                            (email_id, cid)).fetchone()
+        mrow = conn.execute("SELECT message_id, folder_id FROM messages WHERE id=? AND user_id=?",
+                            (email_id, user["id"])).fetchone()
+    if not mrow or not mrow["message_id"]:
+        raise HTTPException(404, "ảnh không tồn tại")
+    cache_dir = os.path.join(os.path.dirname(DB_PATH), "cid_cache")
+    os.makedirs(cache_dir, exist_ok=True)
+    fp = os.path.join(cache_dir, hashlib.sha1(f"{email_id}:{cid}".encode()).hexdigest()[:32])
+    if os.path.exists(fp) and os.path.getsize(fp) > 0:
+        mt = (arow["mime_type"] if arow else "image/png") or "image/png"
+        return FileResponse(fp, media_type=mt.split(";")[0])
+    try:
+        account, _ = first_account_connect(user["id"])
+        item = None
+        with get_db() as conn:
+            item = _find_item_in_folder_by_id(account, conn, mrow["folder_id"], mrow["message_id"])
+        if item is None:
+            item = _find_ews_item(account, None, "", mrow["message_id"])
+        if item is None:
+            raise HTTPException(404, "không tìm thấy thư trên server")
+        blob = None
+        for att in (item.attachments or []):
+            # match by content_id; rows synced before content_id existed match by attachment name too
+            att_cid = (getattr(att, "content_id", None) or "").strip("<>")
+            if att_cid and att_cid == cid.strip("<>"):
+                if getattr(att, "content", None) is None:
+                    att = att.copy()
+                blob = att.content
+                break
+        if blob is None:
+            raise HTTPException(404, "không có nội dung ảnh")
+        with open(fp, "wb") as f:
+            f.write(blob)
+        mt = (arow["mime_type"] if arow and arow["mime_type"] else "image/png")
+        return FileResponse(fp, media_type=mt.split(";")[0])
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"cid image {email_id}/{cid[:20]}: {e}")
+        raise HTTPException(502, "lỗi tải ảnh từ server")
 
 
 @app.get("/api/emails/{email_id}/attachments/{att_id}/download")
@@ -1804,9 +2058,10 @@ async def api_compose(req: ComposeReq, user: dict = Depends(current_user)):
     return {"success": True, "id": mid, "sent": req.send, "server": server_ok}
 
 
-@app.get("/api/events")
-async def api_events(since: float = 0, user: dict = Depends(current_user_q)):
-    """SSE stream of realtime sync events (new_mail / changed)."""
+@app.get("/api/realtime/stream")
+async def api_realtime_stream(since: float = 0, user: dict = Depends(current_user_q)):
+    """SSE stream of realtime sync events (new_mail / changed).
+    NB: NOT /api/events — that path belongs to the calendar module."""
     import realtime
     from fastapi.responses import StreamingResponse
     q = realtime.subscribe(user["id"])
@@ -1831,6 +2086,35 @@ async def api_events(since: float = 0, user: dict = Depends(current_user_q)):
 
     return StreamingResponse(gen(), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+class RealtimeReq(BaseModel):
+    enabled: bool
+
+
+@app.get("/api/realtime/poll")
+async def api_realtime_poll(since: float = 0, user: dict = Depends(current_user)):
+    """Proxy/tunnel-safe fallback for SSE: returns realtime events newer than `since`."""
+    import realtime, time as _t
+    evs = realtime.recent_since(user["id"], since)
+    return {"events": evs[-10:], "server_ts": _t.time()}
+
+
+@app.post("/api/realtime")
+async def api_realtime_set(req: RealtimeReq, user: dict = Depends(current_user)):
+    """Toggle the realtime delta-sync daemon (mirrors settings.autosync)."""
+    import realtime
+    with get_db() as conn:
+        merged = {**get_settings(user["id"]), "autosync": req.enabled}
+        conn.execute("""INSERT INTO user_settings (user_id, json, updated_at) VALUES (?,?,CURRENT_TIMESTAMP)
+                        ON CONFLICT(user_id) DO UPDATE SET json=excluded.json, updated_at=CURRENT_TIMESTAMP""",
+                     (user["id"], json.dumps(merged, ensure_ascii=False)))
+        audit(conn, user["id"], "realtime.toggle", "on" if req.enabled else "off")
+    if req.enabled:
+        realtime.ensure_worker(user["id"])
+    else:
+        realtime.stop_worker(user["id"])
+    return {"success": True, "enabled": req.enabled}
 
 
 # ─── categories / stats / search ─────────────────────────────────────
