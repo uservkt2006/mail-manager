@@ -98,7 +98,7 @@ export default function MailView({ user }) {
 
   return (
     <div className="flex-1 flex overflow-hidden relative">
-      <FolderTree tree={tree} activeFolderId={activeFolder?.id}
+      <FolderTree tree={tree} activeFolderId={activeFolder?.id} onCompose={() => setCompose({ mode: 'new' })}
         onSelect={(f) => { setActiveFolder(f); setSelected(null) }} onChanged={loadTree} />
       <EmailList
         emails={emails} activeFolder={activeFolder} selectedEmailId={selected?.id}
@@ -114,12 +114,12 @@ export default function MailView({ user }) {
         email={selected} folders={tree}
         onArchive={actArchive} onDelete={actDelete} onStar={actStar} onFlag={actFlag}
         onMove={actMove} onCreateTask={actTask}
-        onReply={() => setCompose({ replyTo: selected })}
+        onReply={(mode) => setCompose({ replyTo: selected, mode })}
         onRefresh={() => { loadEmails(); loadTree() }}
       />
       {compose && (
         <ComposeModal
-          replyTo={compose.replyTo} user={user}
+          replyTo={compose.replyTo} mode={compose.mode || 'reply'} user={user}
           onClose={() => setCompose(false)}
           onSent={() => { setCompose(false); loadEmails(); loadTree() }}
         />

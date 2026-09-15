@@ -9,6 +9,7 @@ function fmtDate(iso) {
 }
 
 export default function EmailDetail({ email, folders, onArchive, onDelete, onStar, onFlag, onMove, onCreateTask, onReply, onRefresh }) {
+  // onReply(mode) — 'reply' | 'reply_all' | 'forward'
   const [catMeta, setCatMeta] = useState({ categories: [], colors: {} })
   const [full, setFull] = useState(null)
   const [showCats, setShowCats] = useState(false)
@@ -52,8 +53,14 @@ export default function EmailDetail({ email, folders, onArchive, onDelete, onSta
     <div className="flex-1 bg-dark-bg flex flex-col overflow-hidden min-w-0">
       {/* contextual toolbar */}
       <div className="h-11 flex-shrink-0 border-b border-dark-border flex items-center gap-1 px-3">
-        <button onClick={onReply} className="btn-secondary text-xs flex items-center gap-1.5 py-1.5">
+        <button onClick={() => onReply('reply')} className="btn-secondary text-xs flex items-center gap-1.5 py-1.5">
           <Reply size={13} /> Trả lời
+        </button>
+        <button onClick={() => onReply('reply_all')} className="btn-secondary text-xs flex items-center gap-1.5 py-1.5" title="Trả lời tất cả (A)">
+          <ReplyAll size={13} /> Tất cả
+        </button>
+        <button onClick={() => onReply('forward')} className="btn-secondary text-xs flex items-center gap-1.5 py-1.5" title="Chuyển tiếp (F)">
+          <Forward size={13} /> Chuyển tiếp
         </button>
         <div className="relative">
           <button onClick={() => setShowMove(!showMove)} className="btn-secondary text-xs flex items-center gap-1.5 py-1.5">

@@ -416,11 +416,15 @@ class ComposeReq(BaseModel):
     to: str
     subject: str
     body: str
+    cc: str = ""
     send: bool = True
+    thread_id: Optional[str] = None
+    in_reply_to: Optional[str] = None
 
 
 class ReplyReq(BaseModel):
     body: str
+    mode: str = "reply"      # legacy direct-reply; UI now uses preview+compose
 
 
 class TaskReq(BaseModel):
@@ -1085,6 +1089,74 @@ async def api_email_to_task(email_id: str, user: dict = Depends(current_user)):
     return {"success": True, "task_id": tid}
 
 
+def _split_addr(s: str):
+    """Split 'a@x, b@y' preserving 'Name <addr>' units."""
+    return [p.strip() for p in re.split(r",(?![^<]*>)", s or "") if p.strip()]
+
+
+def _addr_email(a: str) -> str:
+    m = re.search(r"<([^>]+)>", a)
+    return (m.group(1) if m else a).strip().lower()
+
+
+def _prefix_subject(subject: str, prefix: str) -> str:
+    s = (subject or "").strip()
+    if re.match(r"^(re|fwd|fw):", s, flags=re.I):
+        return s
+    return f"{prefix}: {s}" if s else f"{prefix}: (không tiêu đề)"
+
+
+def _quote_block(sender: str, date: str, subject: str, body: str, html: str | None) -> str:
+    head = f'---------- Forwarded message ---------\nTừ: {sender}\nNgày: {date}\nTiêu đề: {subject}\n\n'
+    if html:
+        return (f'<br><div style="color:#888;font-size:12px">{head.replace(chr(10), "<br>")}</div>'
+                f'<blockquote style="border-left:2px solid #ccc;margin:8px 0;padding-left:10px">{html}</blockquote>')
+    quoted = "\n".join("> " + ln for ln in (body or "").splitlines())
+    return head + quoted
+
+
+@app.get("/api/emails/{email_id}/reply-preview")
+async def api_reply_preview(email_id: str, mode: str = "reply", user: dict = Depends(current_user)):
+    """Compose prefill for reply / reply_all / forward (spec §5 Flow A-friendly)."""
+    if mode not in ("reply", "reply_all", "forward"):
+        raise HTTPException(400, "mode phải là reply|reply_all|forward")
+    with get_db() as conn:
+        m = conn.execute("SELECT * FROM messages WHERE id=? AND user_id=?", (email_id, user["id"])).fetchone()
+    if not m:
+        raise HTTPException(404, "Email not found")
+    me_email = user["email"].lower()
+    to_list = _split_addr(m["to"] or "") + [m["from"] or ""]
+    cc_list = _split_addr(m["cc"] or "") if "cc" in m.keys() else []
+    if mode == "reply":
+        to = [m["from"] or ""]
+        cc = []
+        subj = _prefix_subject(m["subject"], "Re")
+    elif mode == "reply_all":
+        seen = {me_email}
+        to, cc = [], []
+        for a in _split_addr(m["from"] or "") + to_list:
+            e = _addr_email(a)
+            if e and e not in seen:
+                seen.add(e)
+                to.append(a)
+        for a in cc_list:
+            e = _addr_email(a)
+            if e and e not in seen:
+                seen.add(e)
+                cc.append(a)
+        subj = _prefix_subject(m["subject"], "Re")
+    else:  # forward — Outlook adds Fwd even onto "Re:" subjects
+        s0 = (m["subject"] or "").strip()
+        subj = s0 if re.match(r"^\s*(fwd|fw):", s0, flags=re.I) else "Fwd: " + (s0 or "(không tiêu đề)")
+        to, cc = [], []
+    quoted = _quote_block(m["from"] or "", m["date"] or "", m["subject"] or "",
+                          m["body"] or "", m["html_body"] if mode != "reply" else None)
+    settings = get_settings(user["id"])
+    return {"to": ", ".join(to), "cc": ", ".join(cc), "subject": subj, "quoted": quoted,
+            "thread_id": m["thread_id"], "in_reply_to": email_id,
+            "signature": settings.get("signature", "")}
+
+
 @app.post("/api/emails/{email_id}/reply")
 async def api_reply(email_id: str, req: ReplyReq, user: dict = Depends(current_user)):
     with get_db() as conn:
@@ -1092,10 +1164,12 @@ async def api_reply(email_id: str, req: ReplyReq, user: dict = Depends(current_u
         if not m:
             raise HTTPException(404, "Email not found")
         rid = f"rp-{secrets.token_hex(6)}"
+        sig = get_settings(user["id"]).get("signature", "")
+        body = req.body + (f"\n\n-- \n{sig}" if sig else "")
         conn.execute("""INSERT INTO messages (id,user_id,message_id,thread_id,folder_id,"from","to",subject,date,preview,body,is_read,starred,categories)
             VALUES (?,?,?,?,?,?,?,?,?,?,?,1,0,'[]')""",
             (rid, user["id"], f"<{rid}>", m["thread_id"], _get_user_folder(conn, user["id"], "sent"),
-             user["email"], m["from"], "Re: " + (m["subject"] or ""), now_iso(), req.body[:100], req.body))
+             user["email"], m["from"], _prefix_subject(m["subject"], "Re"), now_iso(), req.body[:100], body))
         ensure_thread(conn, user["id"], m["thread_id"], m["subject"], None, now_iso(), 0)
     return {"success": True, "id": rid}
 
@@ -1103,14 +1177,19 @@ async def api_reply(email_id: str, req: ReplyReq, user: dict = Depends(current_u
 @app.post("/api/compose")
 async def api_compose(req: ComposeReq, user: dict = Depends(current_user)):
     mid = f"ms-{secrets.token_hex(6)}"
-    tid = f"th-{secrets.token_hex(6)}"
+    tid = req.thread_id or f"th-{secrets.token_hex(6)}"
+    body = req.body
+    if req.send:
+        sig = get_settings(user["id"]).get("signature", "")
+        if sig:
+            body = body + f"\n\n-- \n{sig}"
     with get_db() as conn:
         ftype = "sent" if req.send else "drafts"
         ensure_thread(conn, user["id"], tid, req.subject, [user["email"], req.to], now_iso(), 0)
-        conn.execute("""INSERT INTO messages (id,user_id,message_id,thread_id,folder_id,"from","to",subject,date,preview,body,is_read,starred,categories)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,1,0,'[]')""",
+        conn.execute("""INSERT INTO messages (id,user_id,message_id,thread_id,folder_id,"from","to",cc,subject,date,preview,body,is_read,starred,categories)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,1,0,'[]')""",
             (mid, user["id"], f"<{mid}>", tid, _get_user_folder(conn, user["id"], ftype),
-             user["email"], req.to, req.subject, now_iso(), req.body[:100], req.body))
+             user["email"], req.to, req.cc, req.subject, now_iso(), req.body[:100], body))
         if req.send:
             audit(conn, user["id"], "mail.send", mid, req.to)
     return {"success": True, "id": mid, "sent": req.send}
