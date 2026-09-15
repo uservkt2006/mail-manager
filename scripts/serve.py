@@ -8,7 +8,7 @@ import sys
 
 PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 5173
 DIST = os.path.expanduser("~/tamvk/mail-app/frontend/dist")
-BACKEND = "http://127.0.0.1:18685"
+BACKEND = os.environ.get("MM_API_TARGET", "http://127.0.0.1:18685")
 
 
 class Handler(http.server.SimpleHTTPRequestHandler):

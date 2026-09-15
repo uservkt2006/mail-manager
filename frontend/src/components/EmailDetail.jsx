@@ -1,5 +1,6 @@
-import React, { useState, useEffect } from 'react'
-import { Archive, Trash2, Star, Reply, Flag, CheckSquare, Paperclip, Tags, ChevronDown } from 'lucide-react'
+import React, { useState, useEffect, useMemo } from 'react'
+import { Archive, Trash2, Star, Reply, ReplyAll, Forward, Flag, CheckSquare, Paperclip, Tags, ChevronDown } from 'lucide-react'
+import DOMPurify from 'dompurify'
 import { api } from '../api'
 
 function fmtDate(iso) {
@@ -159,7 +160,22 @@ export default function EmailDetail({ email, folders, onArchive, onDelete, onSta
         )}
 
         <div className="px-6 pb-8">
-          <p className="text-ink text-sm leading-relaxed whitespace-pre-wrap">{m.body}</p>
+          {(() => {
+            if (!m.html_body) return <p className="text-ink text-sm leading-relaxed whitespace-pre-wrap">{m.body}</p>
+            const clean = DOMPurify.sanitize(m.html_body, {
+              USE_PROFILES: { html: true },
+              FORBID_TAGS: ['script', 'style', 'iframe', 'object', 'embed', 'form'],
+              FORBID_ATTR: ['onerror', 'onload', 'onclick', 'style'],
+              ADD_ATTR: ['target'],
+            })
+            // Outlook-style: block remote images by default (cid:/data: kept)
+            const doc = new DOMParser().parseFromString(clean, 'text/html')
+            doc.querySelectorAll('img').forEach((im) => {
+              const src = im.getAttribute('src') || ''
+              if (!/^(data:|cid:)/i.test(src)) { im.removeAttribute('src'); im.dataset.blocked = '1' }
+            })
+            return <div className="mm-mail-html" dangerouslySetInnerHTML={{ __html: doc.body.innerHTML }} />
+          })()}
         </div>
       </div>
     </div>

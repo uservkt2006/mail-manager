@@ -10,6 +10,7 @@ from pydantic import BaseModel
 from typing import Optional, List
 import logging
 import json
+import unicodedata
 import os
 import re
 import sqlite3
@@ -19,6 +20,7 @@ from datetime import datetime, timedelta
 from contextlib import contextmanager
 
 logging.basicConfig(level=logging.INFO)
+logging.getLogger("exchangelib").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Mail Manager", version="3.0.0")
@@ -153,6 +155,7 @@ CREATE TABLE IF NOT EXISTS messages (
     date TEXT,
     preview TEXT,
     body TEXT,
+    html_body TEXT,
     is_read INTEGER DEFAULT 0,
     starred INTEGER DEFAULT 0,
     flag_due TEXT,
@@ -236,6 +239,11 @@ def init_db():
             conn = sqlite3.connect(DB_PATH)
             conn.row_factory = sqlite3.Row
         conn.executescript(SCHEMA)
+        # additive column for pre-v4 DBs (CREATE IF NOT EXISTS won't add it)
+        try:
+            conn.execute("ALTER TABLE messages ADD COLUMN html_body TEXT")
+        except sqlite3.OperationalError:
+            pass
         conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
         # MM_DEMO=0 -> clean first-run (wizard), no seeded demo accounts
         if not has_users and os.environ.get("MM_DEMO", "1") != "0":
@@ -243,12 +251,15 @@ def init_db():
 
 
 def get_or_create_folder(conn, user_id, ftype, name=None, parent_id=None):
-    row = conn.execute("SELECT id FROM folders WHERE user_id=? AND type=? AND name IS COALESCE(?, name)",
-                       (user_id, ftype, name)).fetchone()
+    # identity = (name, parent) so same-named folders at different tree levels stay distinct
+    disp = nfck(name) if name else SYSTEM_FOLDERS.get(ftype, ftype)
+    row = conn.execute(
+        "SELECT id FROM folders WHERE user_id=? AND name=? AND COALESCE(parent_id,-1)=COALESCE(?,-1)",
+        (user_id, disp, parent_id)).fetchone()
     if row:
         return row["id"]
     cur = conn.execute("INSERT INTO folders (user_id,name,type,parent_id) VALUES (?,?,?,?)",
-                       (user_id, name or SYSTEM_FOLDERS.get(ftype, ftype), ftype, parent_id))
+                       (user_id, disp, ftype, parent_id))
     return cur.lastrowid
 
 
@@ -495,8 +506,14 @@ FOLDER_TYPE_BY_NAME = {
 }
 
 
+def nfck(name: str) -> str:
+    """EWS sends Vietnamese folder names decomposed (NFD); normalize to NFC so
+    comparisons and DB identity are stable."""
+    return unicodedata.normalize("NFC", (name or "").strip())
+
+
 def classify_folder(display_name: str) -> str:
-    n = (display_name or "").strip().lower()
+    n = nfck(display_name).lower()
     for ftype, names in FOLDER_TYPE_BY_NAME.items():
         if n in names:
             return ftype
@@ -510,6 +527,23 @@ def safe_ews_id(prefix: str, account_id: int, raw) -> str:
     return f"{prefix}-{account_id}-{hashlib.sha1(str(raw).encode()).hexdigest()[:24]}"
 
 
+# Mail folders worth syncing: EWS system/wrapper folders that are not user mailboxes
+SYNC_SKIP = {"Recoverable Items", "Finder", "AllItems", "AllContacts", "AllPersonMetadata",
+             "BrokerSubscriptions", "CalendarItemSnapshots", "CalendarSharingCacheCollection",
+             "Deduplication", "Deletions", "Versions", "Contacts", "PeopleCache", "Pure Fileings",
+             "Conversation History", "Person Metadata", "System", "Reminders", "Sync Issues",
+             "To-Do Search", "Conversation Action Settings", "Quick Step Settings", "Rule Data",
+             "Junk Email", "RSS Subscriptions", "Local Failures", "Server Failures", "Drafts Root"}
+
+# max items pulled per folder per sync (mailbox has thousands; keep first sync fast)
+FOLDER_SYNC_CAP = int(os.environ.get("MM_SYNC_CAP", "40"))
+
+# EWS wraps real top-level folders inside a "Mailbox Root" container
+# ('Đầu Kho Thông tin' on VN servers) — unwrap it so 'Hộp thư đến' etc. map to
+# the user's top-level system folders, not nested duplicates.
+ROOT_WRAPPERS = {"đầu kho thông tin", "mailbox root", "root", "all folders"}
+
+
 def ews_connect(email: str, password: str, server_url: str):
     from exchangelib import Credentials, Configuration, Account, DELEGATE
     cfg = Configuration(server=ews_hostname(server_url),
@@ -517,61 +551,113 @@ def ews_connect(email: str, password: str, server_url: str):
     return Account(primary_smtp_address=email, config=cfg, access_type=DELEGATE)
 
 
+def _strip_html(html):
+    txt = re.sub(r'<[^>]+>', ' ', html or '')
+    txt = re.sub(r'&nbsp;?', ' ', txt)
+    txt = re.sub(r'[ \t]{2,}', ' ', txt)
+    return txt.strip()
+
+
 def sync_mailbox(user_id: int, acct_row) -> dict:
     """Pull recent items from Exchange into the local DB. Read-only on the server."""
     email = acct_row["address"]
     password = decrypt_password(acct_row["password_encrypted"])
     account = ews_connect(email, password, acct_row["server_url"])
-    stats = {"messages": 0, "threads": 0, "contacts": 0, "events": 0, "folders": 0}
+    stats = {"messages": 0, "threads": 0, "contacts": 0, "events": 0, "folders": 0, "folders_synced": []}
     with get_db() as conn:
         aid = acct_row["id"]
-        # 1. folders
-        folder_ids = {}
-        for f in account.root.children:
-            try:
-                cnt = f.total_count
-            except Exception:
-                cnt = 0
-            ftype = classify_folder(f.name)
-            if ftype == "user" and cnt == 0:
-                continue  # skip empty system/junk folders
-            folder_ids[f.name] = get_or_create_folder(conn, user_id, ftype, f.name)
-            stats["folders"] += 1
 
-        inbox_id = folder_ids.get(account.inbox.name) or get_or_create_folder(conn, user_id, "inbox")
+        # 1+2. walk the whole folder tree; sync every non-empty mail folder (*.Note class),
+        # mirroring parent/child structure into local folders.
+        def collect_note_folders(folders, path=()):
+            for f in folders:
+                try:
+                    fclass = f.folder_class or ""
+                    cnt = f.total_count
+                except Exception:
+                    continue
+                try:
+                    kids = list(f.children)
+                except Exception:
+                    kids = []
+                if nfck(f.name).lower() in ROOT_WRAPPERS:
+                    yield from collect_note_folders(kids, path)  # transparent container
+                    continue
+                p = path + (f.name,)
+                if fclass.endswith(".Note") and cnt and nfck(f.name) not in SYNC_SKIP:
+                    yield f, p
+                if kids:
+                    yield from collect_note_folders(kids, p)
 
-        # 2. recent messages from inbox (capped; oldest-first insert)
+        def ensure_folder_chain(conn, user_id, names):
+            """Create local folders for path components; return leaf id.
+            System folders (inbox/sent/…) always map to the user's top-level one."""
+            names = [nfck(n) for n in names]
+            leaf_type = classify_folder(names[-1])
+            if leaf_type != "user":
+                return get_or_create_folder(conn, user_id, leaf_type)  # matches SYSTEM_FOLDERS name
+            parent = None
+            for n in names:
+                parent = get_or_create_folder(conn, user_id, "user", n, parent)
+            return parent
+
         seen_threads = set()
         try:
-            for m in account.inbox.all().order_by("-datetime_received")[:60]:
-                mid = safe_ews_id("ews", aid, m.id)
-                if conn.execute("SELECT id FROM messages WHERE id=?", (mid,)).fetchone():
+            for folder, path in collect_note_folders(list(account.root.children)):
+                local_id = ensure_folder_chain(conn, user_id, path)
+                stats["folders_synced"].append(folder.name)
+                try:
+                    items = list(folder.all().only(
+                        "subject", "body", "sender", "to_recipients", "cc_recipients",
+                        "datetime_received", "message_id", "is_read", "attachments", "has_attachments",
+                        "importance")
+                        .order_by("-datetime_received")[:FOLDER_SYNC_CAP])
+                except Exception as e:
+                    logger.error(f"folder {folder.name}: {e}")
                     continue
-                date = m.datetime_received.isoformat() if m.datetime_received else now_iso()
-                sender = f"{m.sender.name} <{m.sender.email_address}>" if m.sender and m.sender.email_address else (
-                    str(m.sender) if m.sender else "")
-                body = m.text_body or m.body or ""
-                if not isinstance(body, str):
-                    body = str(body)
-                tid = f"th-{normalize_subject(m.subject)}" if m.subject else mid
-                ensure_thread(conn, user_id, tid, m.subject, [sender], date, 0 if m.is_read else 1)
-                conn.execute(
-                    """INSERT OR IGNORE INTO messages
-                       (id,user_id,account_id,message_id,thread_id,folder_id,"from","to",subject,date,preview,body,is_read,starred,categories)
-                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,0,0,'[]')""",
-                    (mid, user_id, aid, m.message_id, tid, inbox_id, sender,
-                     ",".join(x.email_address for x in (m.to_recipients or []) if x.email_address),
-                     m.subject or "(không tiêu đề)", date, body[:160], body))
-                for i, at in enumerate(m.attachments or []):
-                    conn.execute("INSERT OR IGNORE INTO attachments (id,message_id,name,mime_type,size) VALUES (?,?,?,?,?)",
-                                 (f"att-{mid}-{i}", mid, getattr(at, "name", f"file{i}"),
-                                  str(getattr(at, "content_type", "application/octet-stream")),
-                                  getattr(at, "size", 0) or 0))
-                stats["messages"] += 1
-                seen_threads.add(tid)
+                for m in items:
+                    # generic folders may hold non-message items (Contacts have
+                    # datetime_received too — message_id is the real marker)
+                    if not hasattr(m, "message_id") or not hasattr(m, "datetime_received"):
+                        continue
+                    mid = safe_ews_id("ews", aid, m.id)
+                    if conn.execute("SELECT id FROM messages WHERE id=?", (mid,)).fetchone():
+                        continue
+                    try:
+                        date = m.datetime_received.isoformat() if m.datetime_received else now_iso()
+                    except Exception:
+                        continue
+                    snd = getattr(m, "sender", None)
+                    sender = f"{snd.name} <{snd.email_address}>" if snd and getattr(snd, "email_address", None) else (str(snd) if snd else "")
+                    raw = m.body if m.body is not None else ""
+                    from exchangelib.properties import HTMLBody as _HTMLB
+                    if isinstance(raw, _HTMLB) or (isinstance(raw, str) and raw.lstrip()[:5].lower() == "<html"):
+                        html = str(raw)
+                        text = _strip_html(html)
+                    else:
+                        html = None
+                        text = str(raw)
+                    tid = f"th-{normalize_subject(m.subject)}" if m.subject else mid
+                    is_read = 1 if getattr(m, "is_read", True) else 0
+                    ensure_thread(conn, user_id, tid, m.subject, [sender], date, 1 - is_read)
+                    conn.execute(
+                        """INSERT OR IGNORE INTO messages
+                           (id,user_id,account_id,message_id,thread_id,folder_id,"from","to",subject,date,preview,body,html_body,is_read,starred,categories)
+                           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,'[]')""",
+                        (mid, user_id, aid, m.message_id, tid, local_id, sender,
+                         ",".join(getattr(x, "email_address", "") or "" for x in (getattr(m, "to_recipients", None) or [])),
+                         m.subject or "(không tiêu đề)", date, text[:160], text, html, is_read))
+                    for i, at in enumerate(getattr(m, "attachments", None) or []):
+                        conn.execute("INSERT OR IGNORE INTO attachments (id,message_id,name,mime_type,size) VALUES (?,?,?,?,?)",
+                                     (f"att-{mid}-{i}", mid, getattr(at, "name", f"file{i}"),
+                                      str(getattr(at, "content_type", "application/octet-stream")),
+                                      getattr(at, "size", 0) or 0))
+                    stats["messages"] += 1
+                    seen_threads.add(tid)
         except Exception as e:
             logger.error(f"sync messages: {e}")
         stats["threads"] = len(seen_threads)
+        stats["folders"] = len(stats["folders_synced"])
 
         # 3. next 14 days of calendar (EWS returns UTC-aware datetimes — compare aware)
         from datetime import timezone
