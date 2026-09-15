@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react'
 import { Archive, Trash2, Star, Reply, ReplyAll, Forward, Flag, CheckSquare, Paperclip, Tags, ChevronDown, Download } from 'lucide-react'
 import DOMPurify from 'dompurify'
 import MailBody from './MailBody'
+import ImageLightbox from './ImageLightbox'
 import { api } from '../api'
 
 function fmtDate(iso) {
@@ -20,6 +21,8 @@ export default function EmailDetail({ email, folders, onArchive, onDelete, onSta
   const [showCats, setShowCats] = useState(false)
   const [showMove, setShowMove] = useState(false)
   const [showRecips, setShowRecips] = useState(false)
+  const [preview, setPreview] = useState(null)   // attachment image -> lightbox
+  const [badThumb, setBadThumb] = useState([])   // thumb 404s -> fall back to download chip
 
   useEffect(() => { api.categories().then(setCatMeta).catch(() => {}) }, [])
   useEffect(() => {
@@ -174,7 +177,22 @@ export default function EmailDetail({ email, folders, onArchive, onDelete, onSta
               <Paperclip size={11} className="inline mr-1" />{atts.length} đính kèm
             </div>
             <div className="flex flex-wrap gap-2">
-              {atts.map(a => (
+              {atts.map(a => {
+                const isImg = (a.mime_type || '').startsWith('image/') && !badThumb.includes(a.id)
+                if (isImg) {
+                  return (
+                    <button key={a.id} onClick={() => setPreview(a)}
+                      className="group relative rounded-md overflow-hidden border border-dark-border hover:border-primary/60 bg-dark-bg"
+                      title={`${a.name} — bấm để xem`}
+                      style={{ width: 132, height: 96 }}>
+                      <img src={api.attachmentThumbUrl(m.id, a.id)} alt={a.name} loading="lazy"
+                        onError={() => setBadThumb(s => [...new Set([...s, a.id])])}
+                        className="w-full h-full object-cover group-hover:scale-105 transition-transform" />
+                      <span className="absolute bottom-0 inset-x-0 text-[10px] px-1.5 py-0.5 truncate bg-black/60 text-white/90">{a.name}</span>
+                    </button>
+                  )
+                }
+                return (
                 <a key={a.id} href={api.attachmentUrl(m.id, a.id)} download={a.name}
                   className="flex items-center gap-2 bg-dark-bg border border-dark-border rounded-md px-2.5 py-1.5 hover:border-primary/60"
                   title="Tải về">
@@ -187,10 +205,12 @@ export default function EmailDetail({ email, folders, onArchive, onDelete, onSta
                   </div>
                   <Download size={12} className="text-ink-mute" />
                 </a>
-              ))}
+                )
+              })}
             </div>
           </div>
         )}
+        {preview && <ImageLightbox src={api.attachmentUrl(m.id, preview.id)} name={preview.name} onClose={() => setPreview(null)} />}
 
         <div className="px-6 pb-8">
           <MailBody mailId={m.id} html={m.html_body} text={m.body} />

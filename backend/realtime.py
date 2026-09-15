@@ -139,6 +139,13 @@ def _apply_delta(user_id, a, conn, by_name, row):
                                  (1 if is_read else 0, user_id, f"%{raw}%"))
                     publish(user_id, {"type": "changed", "ts": time.time()})
                 else:  # create / update with full item
+                    # ID_ONLY shape returns empty bodies — fetch full props now
+                    # (one GetItem round-trip) so opening the mail is instant
+                    try:
+                        if getattr(m, "body", None) is None and hasattr(m, "refresh"):
+                            m.refresh()
+                    except Exception:
+                        pass
                     if store_ews_message(conn, user_id, a["id"], row["local_folder_id"], m):
                         touched += 1
                         publish(user_id, {"type": "new_mail",
@@ -264,6 +271,30 @@ def _delta_pass(user_id, cached=None):
         conn.close()
 
 
+def _catchup_empty(user_id, limit=8):
+    """Background-drain rows stored empty by ID_ONLY delta passes, so the user
+    never pays the hydration wait on click. Small batches between normal passes."""
+    conn = _conn()
+    try:
+        rows = conn.execute("""SELECT id FROM messages WHERE user_id=? AND deleted_at IS NULL
+                               AND (body='' OR body IS NULL) AND message_id IS NOT NULL
+                               ORDER BY date DESC LIMIT ?""", (user_id, limit)).fetchall()
+    finally:
+        conn.close()
+    if not rows:
+        return 0
+    from app import _hydrate_message
+    n = 0
+    for r in rows:
+        try:
+            _hydrate_message(user_id, r["id"])
+            n += 1
+            time.sleep(0.3)   # be polite to EWS
+        except Exception:
+            break
+    return n
+
+
 def _loop(user_id, stop):
     from app import get_settings
     err_streak = 0
@@ -274,8 +305,10 @@ def _loop(user_id, stop):
         if err_streak:
             cached.clear()      # after a failure, force a fresh EWS connection
         try:
-            _delta_pass(user_id, cached)
+            n = _delta_pass(user_id, cached)
             err_streak = 0
+            if n == 0:
+                _catchup_empty(user_id, limit=6)   # quiet pass: drain old empty-body rows
         except Exception as e:
             err_streak += 1
             logger.error(f"realtime {user_id}: {type(e).__name__} {e}")

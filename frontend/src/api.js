@@ -60,6 +60,7 @@ export const api = {
   replyPreview: (id, mode) => req('GET', `/emails/${id}/reply-preview?mode=${mode}`),
   forwardPayload: (id) => req('GET', `/emails/${id}/forward-payload`),
   attachmentUrl: (eid, aid) => `/api/emails/${eid}/attachments/${aid}/download?token=${encodeURIComponent(localStorage.getItem('mm_' + 'token') || '')}`,
+  attachmentThumbUrl: (eid, aid) => `/api/emails/${eid}/attachments/${aid}/thumb?token=${encodeURIComponent(localStorage.getItem('mm_' + 'token') || '')}`,
   cidUrl: (eid, cid) => `/api/emails/${eid}/cid/${encodeURIComponent(cid || '')}?token=${encodeURIComponent(localStorage.getItem('mm_' + 'token') || '')}`,
   rules: () => req('GET', '/rules'),
   createRule: (r) => req('POST', '/rules', r),

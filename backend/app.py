@@ -17,6 +17,7 @@ import sqlite3
 import hashlib
 import secrets
 import threading
+import time
 from datetime import datetime, timedelta
 from contextlib import contextmanager
 
@@ -887,11 +888,10 @@ def _find_ews_item(account, acct_row, ews_item_id: str, message_id: str = ""):
             f = getattr(account, extra, None)
             if f is not None:
                 candidates.append(f)
+        # cached map (never walk the tree per call): try the mail's own folder names too
         seen = {id(c) for c in candidates}
-        for f in account.root.walk():
-            if id(f) in seen:
-                continue
-            if getattr(f, 'folder_class', '') == 'IPF.Note' and nfck(f.name) not in SYNC_SKIP:
+        for name, f in _folder_map(account).items():
+            if id(f) not in seen and name not in SYNC_SKIP:
                 candidates.append(f)
         for folder in candidates:
             try:
@@ -988,20 +988,44 @@ def ews_set_read(user_id: int, message_id: str, is_read: bool) -> bool:
         return False
 
 
-def _find_server_folder(account, names):
+_srvfolder_cache = {}   # key -> {name: folder}
+_srvfolder_ts = {}
+
+
+def _folder_map(account, key=None):
+    """Cached name->server-folder map (TTL 5min). The raw root.children walk costs
+    dozens of EWS round-trips — never do it per operation."""
+    key = key or getattr(account, "primary_smtp_address", "acct")
+    now = time.time()
+    if now - _srvfolder_ts.get(key, 0) > 300:
+        out = {}
+        stack = list(account.root.children)
+        while stack:
+            f = stack.pop()
+            try:
+                stack.extend(list(f.children))
+            except Exception:
+                pass
+            if (getattr(f, "folder_class", "") or "").endswith(".Note"):
+                out.setdefault(nfck(f.name), f)
+        _srvfolder_cache[key] = out
+        _srvfolder_ts[key] = now
+    return _srvfolder_cache[key]
+
+
+def _find_server_folder(account, names, key=None):
     """Depth-first search a mail folder by display name (str or candidate list)."""
     targets = {nfck(n) for n in ([names] if isinstance(names, str) else names)}
-    stack = list(account.root.children)
-    while stack:
-        f = stack.pop()
-        try:
-            kids = list(f.children)
-        except Exception:
-            kids = []
-        if nfck(f.name) in targets and (f.folder_class or "").endswith(".Note"):
+    m = _folder_map(account, key)
+    for t in targets:
+        f = m.get(t)
+        if f is not None:
             return f
-        stack.extend(kids)
     return None
+
+
+def _invalidate_folder_map(key):
+    _srvfolder_ts.pop(key, None)
 
 
 def ews_server_action(user_id: int, message_id: str, action: str, dest_folder_name: str = "") -> bool:
@@ -1707,7 +1731,6 @@ async def api_email_get(email_id: str, user: dict = Depends(current_user)):
         row = conn.execute("SELECT * FROM messages WHERE id=?", (email_id,)).fetchone()
         m = _parse_msg(row)
         m["is_read"] = True
-        # Outlook: inline (cid:) images belong to the body, not the attachment chips
         m["attachments"] = [dict(r) for r in conn.execute(
             "SELECT id,name,mime_type,size,scan_state FROM attachments WHERE message_id=? AND is_inline=0", (email_id,))]
     if was_unread and row["message_id"]:
@@ -1764,6 +1787,44 @@ async def api_cid_image(email_id: str, cid: str, user: dict = Depends(current_us
         raise HTTPException(502, "lỗi tải ảnh từ server")
 
 
+def _att_thumb(user_id, email_id, att_id, width=420):
+    """Return cached thumbnail path for an image attachment (fetch+resize once)."""
+    import hashlib
+    from PIL import Image as PILImage
+    import io as _io
+    with get_db() as conn:
+        mrow = conn.execute("SELECT message_id FROM messages WHERE id=? AND user_id=?", (email_id, user_id)).fetchone()
+        arow = conn.execute("SELECT name,mime_type FROM attachments WHERE id=? AND message_id=?", (att_id, email_id)).fetchone()
+    if not mrow or not arow or not mrow["message_id"]:
+        raise HTTPException(404, "Không tìm thấy tệp")
+    cache_dir = os.path.join(os.path.dirname(DB_PATH), "att_thumb")
+    os.makedirs(cache_dir, exist_ok=True)
+    fp = os.path.join(cache_dir, f"{hashlib.sha1(f'{att_id}:{width}'.encode()).hexdigest()[:24]}.jpg")
+    if os.path.exists(fp) and os.path.getsize(fp) > 0:
+        return fp
+    blob = ews_get_attachment(user_id, mrow["message_id"], arow["name"])
+    if not blob:
+        raise HTTPException(404, "Không tải được tệp")
+    im = PILImage.open(_io.BytesIO(blob))
+    im.load()
+    if im.mode in ("RGBA", "P", "LA"):
+        bg = PILImage.new("RGB", im.size, (255, 255, 255))
+        im = im.convert("RGBA")
+        bg.paste(im, mask=im.split()[-1])
+        im = bg
+    else:
+        im = im.convert("RGB")
+    im.thumbnail((width, width * 3))
+    im.save(fp, "JPEG", quality=82)
+    return fp
+
+
+@app.get("/api/emails/{email_id}/attachments/{att_id}/thumb")
+async def api_attachment_thumb(email_id: str, att_id: str, user: dict = Depends(current_user_q)):
+    from fastapi.responses import FileResponse
+    return FileResponse(_att_thumb(user["id"], email_id, att_id), media_type="image/jpeg")
+
+
 @app.get("/api/emails/{email_id}/attachments/{att_id}/download")
 async def api_attachment_download(email_id: str, att_id: str, user: dict = Depends(current_user_q)):
     """Stream one attachment: prefer cached server fetch, fall back to EWS live download."""
@@ -1816,10 +1877,19 @@ def _get_user_folder(conn, uid, ftype):
 @app.post("/api/emails/{email_id}/move")
 async def api_move(email_id: str, req: MoveReq, user: dict = Depends(current_user)):
     with get_db() as conn:
-        if not conn.execute("SELECT id FROM folders WHERE id=? AND user_id=?", (req.folder_id, user["id"])).fetchone():
+        tgt = conn.execute("SELECT name FROM folders WHERE id=? AND user_id=?", (req.folder_id, user["id"])).fetchone()
+        if not tgt:
             raise HTTPException(404, "Folder not found")
+        m = conn.execute("SELECT message_id FROM messages WHERE id=? AND user_id=?", (email_id, user["id"])).fetchone()
         conn.execute("UPDATE messages SET folder_id=? WHERE id=? AND user_id=?", (req.folder_id, email_id, user["id"]))
         audit(conn, user["id"], "mail.move", email_id, str(req.folder_id))
+    if m and m["message_id"]:
+        def work(mid=m["message_id"], uid=user["id"], name=tgt["name"]):
+            try:
+                ews_server_action(uid, mid, "move", name)
+            except Exception as e:
+                logger.error(f"server move {email_id}: {e}")
+        threading.Thread(target=work, daemon=True).start()
     return {"success": True}
 
 
@@ -1830,14 +1900,15 @@ async def api_archive(email_id: str, user: dict = Depends(current_user)):
         fid = _get_user_folder(conn, user["id"], "archive")
         conn.execute("UPDATE messages SET folder_id=? WHERE id=? AND user_id=?", (fid, email_id, user["id"]))
         audit(conn, user["id"], "mail.archive", email_id)
-    # mirror on the Exchange server (best-effort; local move already succeeded)
-    srv = False
+    # mirror on the Exchange server in the BACKGROUND — the click returns instantly
     if m and m["message_id"]:
-        try:
-            srv = ews_server_action(user["id"], m["message_id"], "archive")
-        except Exception as e:
-            logger.error(f"server archive {email_id}: {e}")
-    return {"success": True, "server": srv}
+        def work(mid=m["message_id"], uid=user["id"]):
+            try:
+                ews_server_action(uid, mid, "archive")
+            except Exception as e:
+                logger.error(f"server archive {email_id}: {e}")
+        threading.Thread(target=work, daemon=True).start()
+    return {"success": True, "server": "queued"}
 
 
 @app.delete("/api/emails/{email_id}")
@@ -1877,12 +1948,9 @@ async def api_read(email_id: str, req: ReadReq, user: dict = Depends(current_use
     with get_db() as conn:
         m = conn.execute("SELECT message_id FROM messages WHERE id=? AND user_id=?", (email_id, user["id"])).fetchone()
         conn.execute("UPDATE messages SET is_read=? WHERE id=? AND user_id=?", (1 if req.is_read else 0, email_id, user["id"]))
-    # propagate read-state to Exchange (mark as read / clear flag)
+    # propagate read-state to Exchange in the BACKGROUND (EWS round-trips must not block the click)
     if m and m["message_id"]:
-        try:
-            ews_set_read(user["id"], m["message_id"], req.is_read)
-        except Exception as e:
-            logger.error(f"server read-state {email_id}: {e}")
+        _server_set_read_async(user["id"], m["message_id"], req.is_read)
     return {"success": True}
 
 
