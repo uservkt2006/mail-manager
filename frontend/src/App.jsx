@@ -20,6 +20,26 @@ export default function App() {
   const [setupNeeded, setSetupNeeded] = useState(false)
   const [hasAccount, setHasAccount] = useState(false)
   const [online, setOnline] = useState(true)
+  const [rt, setRt] = useState(null)   // last realtime event {type, subject, ts}
+
+  useEffect(() => {
+    if (!user) { return }
+    let es, closed = false
+    try {
+      es = new EventSource(`/api/events?token=${encodeURIComponent(localStorage.getItem('mm_' + 'token') || '')}`)
+      es.onmessage = (e) => {
+        try { setRt(JSON.parse(e.data)) } catch { /* comment frames */ }
+      }
+      es.onerror = () => { /* browser auto-reconnects; keep state */ }
+    } catch { /* offline */ }
+    return () => { closed = true; es && es.close() }
+  }, [user])
+
+  // auto-refresh mail views when realtime reports new/changed items
+  useEffect(() => {
+    if (!rt) return
+    window.dispatchEvent(new Event('mm-synced'))
+  }, [rt])
 
   useEffect(() => {
     const boot = async () => {
@@ -89,7 +109,7 @@ export default function App() {
           {module === 'calendar' && <CalendarView />}
           {module === 'people' && <PeopleView />}
           {module === 'tasks' && <TasksView />}
-          <StatusBar online={online} itemInfo="" hasAccount={hasAccount} onRefresh={() => window.dispatchEvent(new Event('mm-synced'))} />
+          <StatusBar online={online} itemInfo="" hasAccount={hasAccount} realtime={rt} onRefresh={() => window.dispatchEvent(new Event('mm-synced'))} />
         </div>
       </div>
       {showSettings && <SettingsModal user={user} section={settingsSection} onClose={() => setShowSettings(false)} onLogout={logout} />}

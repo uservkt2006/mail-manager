@@ -29,7 +29,7 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], all
 # SQLite database path (MM_DB_PATH lets tests use an isolated DB)
 DB_PATH = os.environ.get("MM_DB_PATH") or os.path.expanduser("~/.mail_manager/mail_manager.db")
 KEY_PATH = os.path.expanduser("~/.mail_manager/key")
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 CATEGORIES = ["Work", "Personal", "Finance", "Urgent", "Travel", "Other"]
 CATEGORY_COLORS = {"Work": "#4c8dff", "Personal": "#22c55e", "Finance": "#f59e0b",
@@ -92,9 +92,14 @@ def current_user_q(x_auth_token: str = Header(default=None), token: str = "") ->
 # ─── db ───────────────────────────────────────────────────────────────
 @contextmanager
 def get_db():
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=30)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
+    conn.execute("PRAGMA busy_timeout = 30000")
+    try:
+        conn.execute("PRAGMA journal_mode = WAL")  # background delta writer vs HTTP readers
+    except sqlite3.OperationalError:
+        pass
     try:
         yield conn
         conn.commit()
@@ -227,6 +232,14 @@ CREATE TABLE IF NOT EXISTS rules (
     last_hit_at TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+CREATE TABLE IF NOT EXISTS folder_sync (
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    folder_path TEXT NOT NULL,        -- json list of NFC names from root
+    local_folder_id INTEGER REFERENCES folders(id),
+    ews_sync_state TEXT,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (user_id, folder_path)
+);
 CREATE TABLE IF NOT EXISTS search_folders (
     id TEXT PRIMARY KEY,
     user_id INTEGER NOT NULL REFERENCES users(id),
@@ -252,8 +265,24 @@ def now_iso():
     return datetime.now().isoformat()
 
 
+def _fix_folder_sync_shape(conn):
+    """folder_sync is pure state (rebuildable from next full sync); migrate old 3-col shape."""
+    cols = [r[1] for r in conn.execute("PRAGMA table_info(folder_sync)")]
+    if cols and "local_folder_id" not in cols:
+        conn.executescript(
+            "DROP TABLE folder_sync;"
+            "CREATE TABLE folder_sync ("
+            "user_id INTEGER NOT NULL REFERENCES users(id),"
+            "folder_path TEXT NOT NULL,"
+            "local_folder_id INTEGER REFERENCES folders(id),"
+            "ews_sync_state TEXT,"
+            "updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,"
+            "PRIMARY KEY (user_id, folder_path));")
+
+
 def init_db():
     with get_db() as conn:
+        _fix_folder_sync_shape(conn)
         ver = conn.execute("PRAGMA user_version").fetchone()[0]
         if ver >= SCHEMA_VERSION:
             return
@@ -269,6 +298,17 @@ def init_db():
             conn = sqlite3.connect(DB_PATH)
             conn.row_factory = sqlite3.Row
         conn.executescript(SCHEMA)
+        # folder_sync is pure state (rebuildable from next full sync); upgrade in place
+        _fs_cols = [r[1] for r in conn.execute("PRAGMA table_info(folder_sync)")]
+        if _fs_cols and "local_folder_id" not in _fs_cols:
+            conn.executescript("DROP TABLE folder_sync;")
+            conn.executescript("CREATE TABLE IF NOT EXISTS folder_sync ("
+                               "user_id INTEGER NOT NULL REFERENCES users(id),"
+                               "folder_path TEXT NOT NULL,"
+                               "local_folder_id INTEGER REFERENCES folders(id),"
+                               "ews_sync_state TEXT,"
+                               "updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,"
+                               "PRIMARY KEY (user_id, folder_path));")
         # additive columns for live DBs (CREATE IF NOT EXISTS won't add them)
         for col, typ in (("html_body", "TEXT"), ("cc", "TEXT"), ("bcc", "TEXT"),
                          ("ews_item_id", "TEXT")):
@@ -408,6 +448,15 @@ def seed(conn):
 
 
 init_db()
+
+# realtime: resume delta-sync workers on boot for users that have an Exchange account
+try:
+    import realtime as _rt
+    with get_db() as _c:
+        for _u in _c.execute("SELECT DISTINCT user_id FROM mail_accounts").fetchall():
+            _rt.ensure_worker(_u["user_id"])
+except Exception as _e:
+    logging.getLogger(__name__).warning(f"realtime boot skipped: {_e}")
 
 
 # ─── models ───────────────────────────────────────────────────────────
@@ -599,6 +648,56 @@ def _strip_html(html):
     return txt.strip()
 
 
+def store_ews_message(conn, user_id, aid, local_id, m):
+    """Insert/refresh one EWS message row. Returns True if a NEW row was created."""
+    if not hasattr(m, "message_id") or not hasattr(m, "datetime_received"):
+        return False
+    mid = safe_ews_id("ews", aid, m.id)
+    raw_ews_id = str(m.id)
+    try:
+        date = m.datetime_received.isoformat() if m.datetime_received else now_iso()
+    except Exception:
+        return False
+    snd = getattr(m, "sender", None)
+    sender = f"{snd.name} <{snd.email_address}>" if snd and getattr(snd, "email_address", None) else (str(snd) if snd else "")
+    raw = m.body if m.body is not None else ""
+    from exchangelib.properties import HTMLBody as _HTMLB
+    if isinstance(raw, _HTMLB) or (isinstance(raw, str) and raw.lstrip()[:5].lower() == "<html"):
+        html = str(raw)
+        text = _strip_html(html)
+    else:
+        html = None
+        text = str(raw)
+    is_read = 1 if getattr(m, "is_read", True) else 0
+    old_row = conn.execute("SELECT id, is_read FROM messages WHERE id=?", (mid,)).fetchone()
+    if old_row:
+        if not old_row["is_read"] and is_read:
+            conn.execute("UPDATE messages SET is_read=1 WHERE id=?", (mid,))
+        return False
+    cc = _fmt_recips(getattr(m, "cc_recipients", None))
+    bcc = _fmt_recips(getattr(m, "bcc_recipients", None))
+    tid = f"th-{normalize_subject(m.subject)}" if m.subject else mid
+    ensure_thread(conn, user_id, tid, m.subject, [sender], date, 1 - is_read)
+    conn.execute(
+        """INSERT OR IGNORE INTO messages
+           (id,user_id,account_id,message_id,ews_item_id,thread_id,folder_id,"from","to",cc,bcc,subject,date,preview,body,html_body,is_read,starred,categories)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,'[]')""",
+        (mid, user_id, aid, m.message_id, raw_ews_id, tid, local_id, sender,
+         _fmt_recips(getattr(m, "to_recipients", None)), cc, bcc,
+         m.subject or "(không tiêu đề)", date, text[:400], text, html, is_read))
+    for i, at in enumerate(getattr(m, "attachments", None) or []):
+        conn.execute("INSERT OR IGNORE INTO attachments (id,message_id,name,mime_type,size) VALUES (?,?,?,?,?)",
+                     (f"att-{mid}-{i}", mid, getattr(at, "name", f"file{i}"),
+                      str(getattr(at, "content_type", "application/octet-stream")),
+                      getattr(at, "size", 0) or 0))
+    try:  # Outlook-style: rules run on arrival
+        mr = dict(conn.execute("SELECT m.*, EXISTS(SELECT 1 FROM attachments a WHERE a.message_id=m.id) has_attachments FROM messages m WHERE m.id=?", (mid,)).fetchone())
+        apply_rules(conn, user_id, mr)
+    except Exception as e:
+        logger.error(f"rule {mid}: {e}")
+    return True
+
+
 def _fmt_recips(recips):
     """[Mailbox,...] -> 'Name <a@x>, Name2 <b@y>' display form (Outlook-style)."""
     out = []
@@ -670,57 +769,16 @@ def sync_mailbox(user_id: int, acct_row) -> dict:
                 except Exception as e:
                     logger.error(f"folder {folder.name}: {e}")
                     continue
+                try:
+                    conn.execute("INSERT OR REPLACE INTO folder_sync (user_id,folder_path,local_folder_id,ews_sync_state,updated_at)"
+                                 " VALUES (?,?,?,?,CURRENT_TIMESTAMP)",
+                                 (user_id, json.dumps([nfck(n) for n in path]), local_id, folder.item_sync_state))
+                except Exception:
+                    pass
                 for m in items:
-                    # generic folders may hold non-message items (Contacts have
-                    # datetime_received too — message_id is the real marker)
-                    if not hasattr(m, "message_id") or not hasattr(m, "datetime_received"):
-                        continue
-                    mid = safe_ews_id("ews", aid, m.id)
-                    raw_ews_id = str(m.id)
-                    try:
-                        date = m.datetime_received.isoformat() if m.datetime_received else now_iso()
-                    except Exception:
-                        continue
-                    snd = getattr(m, "sender", None)
-                    sender = f"{snd.name} <{snd.email_address}>" if snd and getattr(snd, "email_address", None) else (str(snd) if snd else "")
-                    raw = m.body if m.body is not None else ""
-                    from exchangelib.properties import HTMLBody as _HTMLB
-                    if isinstance(raw, _HTMLB) or (isinstance(raw, str) and raw.lstrip()[:5].lower() == "<html"):
-                        html = str(raw)
-                        text = _strip_html(html)
-                    else:
-                        html = None
-                        text = str(raw)
-                    is_read = 1 if getattr(m, "is_read", True) else 0
-                    old_row = conn.execute("SELECT id, is_read FROM messages WHERE id=?", (mid,)).fetchone()
-                    if old_row:
-                        if not old_row["is_read"] and is_read:  # got read on server
-                            conn.execute("UPDATE messages SET is_read=1 WHERE id=?", (mid,))
-                        continue
-                    cc = _fmt_recips(getattr(m, "cc_recipients", None))
-                    bcc = _fmt_recips(getattr(m, "bcc_recipients", None))
-                    tid = f"th-{normalize_subject(m.subject)}" if m.subject else mid
-                    ensure_thread(conn, user_id, tid, m.subject, [sender], date, 1 - is_read)
-                    conn.execute(
-                        """INSERT OR IGNORE INTO messages
-                           (id,user_id,account_id,message_id,ews_item_id,thread_id,folder_id,"from","to",cc,bcc,subject,date,preview,body,html_body,is_read,starred,categories)
-                           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,'[]')""",
-                        (mid, user_id, aid, m.message_id, raw_ews_id, tid, local_id, sender,
-                         _fmt_recips(getattr(m, "to_recipients", None)), cc, bcc,
-                         m.subject or "(không tiêu đề)", date, text[:400], text, html, is_read))
-                    for i, at in enumerate(getattr(m, "attachments", None) or []):
-                        conn.execute("INSERT OR IGNORE INTO attachments (id,message_id,name,mime_type,size) VALUES (?,?,?,?,?)",
-                                     (f"att-{mid}-{i}", mid, getattr(at, "name", f"file{i}"),
-                                      str(getattr(at, "content_type", "application/octet-stream")),
-                                      getattr(at, "size", 0) or 0))
-                    stats["messages"] += 1
-                    seen_threads.add(tid)
-                    try:  # Outlook-style: rules run on arrival
-                        mr = dict(conn.execute("SELECT m.*, EXISTS(SELECT 1 FROM attachments a WHERE a.message_id=m.id) has_attachments FROM messages m WHERE m.id=?", (mid,)).fetchone())
-                        if apply_rules(conn, user_id, mr):
-                            stats["rules_fired"] = stats.get("rules_fired", 0) + 1
-                    except Exception as e:
-                        logger.error(f"rule {mid}: {e}")
+                    if store_ews_message(conn, user_id, aid, local_id, m):
+                        stats["messages"] += 1
+                        seen_threads.add(f"th-{normalize_subject(m.subject)}" if m.subject else safe_ews_id("ews", aid, m.id))
         except Exception as e:
             logger.error(f"sync messages: {e}")
         stats["threads"] = len(seen_threads)
@@ -1138,7 +1196,7 @@ def _search_folder_ids(user_id):
 # ─── auth ─────────────────────────────────────────────────────────────
 @app.get("/api/health")
 async def health():
-    return {"status": "ok", "service": "mail-manager", "version": "3.3.0"}
+    return {"status": "ok", "service": "mail-manager", "version": "3.4.0"}
 
 
 @app.get("/api/auth/status")
@@ -1261,6 +1319,10 @@ def sync_now(user: dict = Depends(current_user)):
         except Exception as e:
             logger.error(f"sync {r['address']}: {e}")
             per.append({"address": r["address"], "error": str(e)[:180]})
+    try:
+        import realtime; realtime.ensure_worker(user["id"])   # keep deltas flowing after a full sync
+    except Exception:
+        pass
     return {"success": True, "total": total, "accounts": per}
 
 
@@ -1273,6 +1335,10 @@ async def login(req: LoginReq):
         token = secrets.token_hex(32)
         conn.execute("INSERT INTO sessions (token,user_id) VALUES (?,?)", (token, u["id"]))
         audit(conn, u["id"], "login", "session")
+        try:
+            import realtime; realtime.ensure_worker(u["id"])
+        except Exception:
+            pass
         return {"token": token, "user": {"id": u["id"], "email": u["email"], "display_name": u["display_name"]}}
 
 
@@ -1736,6 +1802,35 @@ async def api_compose(req: ComposeReq, user: dict = Depends(current_user)):
             logger.error(f"EWS send failed (kept local): {e}")
             server_ok = False
     return {"success": True, "id": mid, "sent": req.send, "server": server_ok}
+
+
+@app.get("/api/events")
+async def api_events(since: float = 0, user: dict = Depends(current_user_q)):
+    """SSE stream of realtime sync events (new_mail / changed)."""
+    import realtime
+    from fastapi.responses import StreamingResponse
+    q = realtime.subscribe(user["id"])
+
+    def gen():
+        yield ": connected\n\n"
+        for ev in realtime.recent_since(user["id"], since):
+            yield f"data: {json.dumps(ev, ensure_ascii=False)}\n\n"
+        import time as _t
+        last = _t.time()
+        try:
+            while True:
+                try:
+                    ev = q.get(timeout=15)
+                    yield f"data: {json.dumps(ev, ensure_ascii=False)}\n\n"
+                except Exception:
+                    yield ": ping\n\n"
+                if _t.time() - last > 3600:
+                    break
+        finally:
+            realtime.unsubscribe(user["id"], q)
+
+    return StreamingResponse(gen(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
 # ─── categories / stats / search ─────────────────────────────────────

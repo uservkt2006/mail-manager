@@ -1,12 +1,20 @@
-import React, { useState } from 'react'
-import { Check, RefreshCw, Cloud, CloudOff, CloudCog } from 'lucide-react'
+import React, { useState, useEffect } from 'react'
+import { Check, RefreshCw, Cloud, CloudOff, CloudCog, Radio } from 'lucide-react'
 import { api } from '../api'
 
-export default function StatusBar({ itemInfo, online, onRefresh, hasAccount }) {
+export default function StatusBar({ itemInfo, online, onRefresh, hasAccount, realtime }) {
   const [syncAt, setSyncAt] = useState(null)
   const [spinning, setSpinning] = useState(false)
   const [syncing, setSyncing] = useState(false)
   const [note, setNote] = useState(null)
+
+  // flash incoming realtime events briefly
+  useEffect(() => {
+    if (!realtime) return
+    setNote(realtime.type === 'new_mail' ? `📩 Thư mới: ${(realtime.subject || '').slice(0, 60)}` : 'Hộp thư vừa cập nhật')
+    const t = setTimeout(() => setNote(null), 8000)
+    return () => clearTimeout(t)
+  }, [realtime])
 
   const refresh = () => {
     setSpinning(true)
@@ -35,6 +43,11 @@ export default function StatusBar({ itemInfo, online, onRefresh, hasAccount }) {
       <span>{itemInfo}</span>
       <div className="flex-1" />
       {note && <span className="text-primary">{note}</span>}
+      {hasAccount && (
+        <span className="flex items-center gap-1 text-emerald-500/80" title="Delta sync: mail mới tự xuất hiện sau vài giây">
+          <Radio size={10} className="animate-pulse" /> Trực tiếp
+        </span>
+      )}
       {hasAccount && (
         <button onClick={doSync} disabled={syncing} className="flex items-center gap-1.5 hover:text-ink disabled:opacity-60" title="Đồng bộ ngay với Exchange">
           <CloudCog size={11} className={syncing ? 'animate-spin' : ''} /> {syncing ? 'Đang đồng bộ…' : 'Đồng bộ ngay'}

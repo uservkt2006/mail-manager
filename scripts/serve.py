@@ -2,6 +2,7 @@
 import http.server
 import socketserver
 import urllib.request
+import urllib.error
 import os
 import json
 import sys
@@ -12,8 +13,44 @@ BACKEND = os.environ.get("MM_API_TARGET", "http://127.0.0.1:18685")
 
 
 class Handler(http.server.SimpleHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=DIST, **kwargs)
+
+    def _stream_proxy(self):
+        """Pass-through for SSE (/api/events): chunked, flushed per line."""
+        req = urllib.request.Request(BACKEND + self.path,
+                                     headers={"Accept": "text/event-stream"})
+        try:
+            resp = urllib.request.urlopen(req, timeout=180)
+        except Exception as e:
+            payload = json.dumps({"error": str(e)}).encode()
+            self.send_response(502)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+            return
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("X-Accel-Buffering", "no")
+        self.send_header("Transfer-Encoding", "chunked")
+        self.end_headers()
+        try:
+            for line in resp:                      # yields as SSE frames arrive
+                chunk = b"%x\r\n%s\r\n" % (len(line), line)
+                self.wfile.write(chunk)
+                self.wfile.flush()
+        except Exception:
+            pass
+        finally:
+            try:
+                self.wfile.write(b"0\r\n\r\n")
+                self.wfile.flush()
+            except Exception:
+                pass
 
     def _proxy(self, method):
         length = int(self.headers.get("Content-Length", 0) or 0)
@@ -48,7 +85,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.wfile.write(payload)
 
     def do_GET(self):
-        if self.path.startswith("/api"):
+        if self.path.startswith("/api/events"):
+            self._stream_proxy()
+        elif self.path.startswith("/api"):
             self._proxy("GET")
         else:
             super().do_GET()
