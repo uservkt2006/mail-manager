@@ -28,7 +28,17 @@ export default function EmailDetail({ email, folders, onArchive, onDelete, onSta
   useEffect(() => {
     if (email?.id) {
       setFull(null)
-      api.email(email.id).then(d => { setFull(d); onRefresh?.() }).catch(() => setFull(null))
+      let alive = true
+      const load = (tries) => {
+        api.email(email.id).then(d => {
+          if (!alive) return
+          setFull(d)
+          onRefresh?.()
+          if (d.hydrating && tries > 0) setTimeout(() => load(tries - 1), 1200)
+        }).catch(() => { if (alive) setFull(null) })
+      }
+      load(15)   // keep polling up to ~18s while the hydrator fetches the body
+      return () => { alive = false }
     }
   }, [email?.id])
 

@@ -273,8 +273,8 @@ def _delta_pass(user_id, cached=None):
 
 
 def _catchup_empty(user_id, limit=8):
-    """Background-drain rows stored empty by ID_ONLY delta passes, so the user
-    never pays the hydration wait on click. Small batches between normal passes."""
+    """Background-drain rows stored empty by ID_ONLY delta passes via the shared
+    hydration queue (one EWS worker, priority for clicks)."""
     conn = _conn()
     try:
         rows = conn.execute("""SELECT id FROM messages WHERE user_id=? AND deleted_at IS NULL
@@ -282,17 +282,11 @@ def _catchup_empty(user_id, limit=8):
                                ORDER BY date DESC LIMIT ?""", (user_id, limit)).fetchall()
     finally:
         conn.close()
-    if not rows:
-        return 0
-    from app import _hydrate_message
+    from app import hq_push
     n = 0
     for r in rows:
-        try:
-            _hydrate_message(user_id, r["id"])
+        if hq_push(user_id, r["id"]):
             n += 1
-            time.sleep(0.3)   # be polite to EWS
-        except Exception:
-            break
     return n
 
 

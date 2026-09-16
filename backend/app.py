@@ -293,19 +293,62 @@ def _fold_vi(s):
 
 def _ensure_fts(conn):
     """FTS5 index over mail text with Vietnamese folding (hợp đồng <-> hop dong,
-    incl. đ->d which sqlite's remove_diacritics misses). Plain table; rowid = messages.rowid.
-    Rebuilt wholesale by _fts_rebuild (startup + every 60s + after syncs) — no triggers."""
+    incl. d-<diaeresis> which sqlite's remove_diacritics misses). Plain table;
+    rowid = messages.rowid. Incremental maintenance via _fts_ensure_row/_fts_keeper."""
     old = conn.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='msg_fts'").fetchone()
-    if old and ("content='messages'" in (old[0] or '') or 'f_body' not in (old[0] or '')):
+    # drop legacy triggers from the old trigger-based design (they corrupt the new table)
+    for tr in ('msg_fts_ai', 'msg_fts_ad', 'msg_fts_au'):
+        conn.execute(f"DROP TRIGGER IF EXISTS {tr}")
+    if old and ("content='messages'" in (old[0] or '') or 'meta' not in (old[0] or '')):
         conn.execute("DROP TABLE msg_fts")
     conn.execute("""CREATE VIRTUAL TABLE IF NOT EXISTS msg_fts USING fts5(
         subject, sender, recipients, preview, body,
         f_subject, f_sender, f_recipients, f_preview, f_body,
+        meta UNINDEXED,
         tokenize="unicode61 remove_diacritics 2")""")
+    if conn.execute("SELECT COUNT(*) FROM msg_fts").fetchone()[0] == 0:
+        _fts_rebuild(conn)   # cold start (or schema migration): build once, keeper maintains after
+
+
+def _meta_of(s_len, b_len):
+    return f"{s_len}:{b_len}"
+
+
+def _fts_rowid(conn, rowid):
+    """(Re)index one message row in msg_fts — incremental, no full rebuild.
+    Safe inside the caller's transaction."""
+    r = conn.execute(
+        """SELECT deleted_at IS NOT NULL AS dead,
+                  coalesce(subject,'') s, coalesce("from",'') f,
+                  coalesce("to",'')||' '||coalesce(cc,'')||' '||coalesce(bcc,'') t,
+                  coalesce(preview,'') p,
+                  coalesce(body,'')||' '||coalesce(html_body,'') b,
+                  LENGTH(COALESCE(body,''))+LENGTH(COALESCE(html_body,'')) blen
+           FROM messages WHERE rowid=?""", (rowid,)).fetchone()
+    if not r:
+        return
+    conn.execute("DELETE FROM msg_fts WHERE rowid=?", (rowid,))
+    if not r["dead"]:
+        conn.execute(
+            "INSERT INTO msg_fts(rowid,subject,sender,recipients,preview,body,"
+            "f_subject,f_sender,f_recipients,f_preview,f_body,meta) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+            (rowid, r["s"], r["f"], r["t"], r["p"], r["b"],
+             _fold_vi(r["s"]), _fold_vi(r["f"]), _fold_vi(r["t"]), _fold_vi(r["p"]), _fold_vi(r["b"]),
+             _meta_of(len(r["s"]), r["blen"])))
+
+
+def _fts_ensure_row(conn, email_id):
+    """Hook for write paths: index one message by its id column."""
+    try:
+        r = conn.execute("SELECT rowid FROM messages WHERE id=?", (email_id,)).fetchone()
+        if r:
+            _fts_rowid(conn, r["rowid"])
+    except Exception:
+        pass
 
 
 def _fts_rebuild(conn=None):
-    """Reindex all live messages; folded columns strip every Vietnamese accent incl. đ."""
+    """One-off full reindex (startup when empty, or manual repair)."""
     own = conn is None
     if own:
         conn = sqlite3.connect(DB_PATH, timeout=60)
@@ -314,20 +357,51 @@ def _fts_rebuild(conn=None):
     rows = conn.execute(
         """SELECT rowid, coalesce(subject,''), coalesce("from",''),
                   coalesce("to",'')||' '||coalesce(cc,'')||' '||coalesce(bcc,''),
-                  coalesce(preview,''), coalesce(body,'')||' '||coalesce(html_body,'')
+                  coalesce(preview,''), coalesce(body,'')||' '||coalesce(html_body,''),
+                  LENGTH(COALESCE(body,''))+LENGTH(COALESCE(html_body,''))
            FROM messages WHERE deleted_at IS NULL""").fetchall()
     conn.execute("DELETE FROM msg_fts")
     conn.commit()
     args = [(r[0], r[1], r[2], r[3], r[4], r[5],
-             _fold_vi(r[1]), _fold_vi(r[2]), _fold_vi(r[3]), _fold_vi(r[4]), _fold_vi(r[5])) for r in rows]
-    for i in range(0, len(args), 200):   # commit in chunks: never hold the write lock too long
+             _fold_vi(r[1]), _fold_vi(r[2]), _fold_vi(r[3]), _fold_vi(r[4]), _fold_vi(r[5]),
+             _meta_of(len(r[1]), r[6])) for r in rows]
+    for i in range(0, len(args), 200):   # chunked commits: short write locks
         conn.executemany(
-            "INSERT INTO msg_fts(rowid,subject,sender,recipients,preview,body,f_subject,f_sender,f_recipients,f_preview,f_body) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO msg_fts(rowid,subject,sender,recipients,preview,body,"
+            "f_subject,f_sender,f_recipients,f_preview,f_body,meta) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
             args[i:i + 200])
         conn.commit()
-    if own:
-        conn.commit()
     logger.info(f"fts rebuilt: {len(rows)} docs in {time.time()-t0:.1f}s")
+
+
+def _fts_keeper():
+    """Every 20s: index new/drifted rows, drop deleted — incremental, short locks."""
+    while True:
+        time.sleep(20)
+        try:
+            conn = sqlite3.connect(DB_PATH, timeout=60)
+            conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA busy_timeout=60000")
+            try:
+                stale = conn.execute(
+                    """SELECT m.rowid FROM messages m
+                       LEFT JOIN msg_fts f ON f.rowid = m.rowid
+                       WHERE m.deleted_at IS NULL
+                         AND (f.rowid IS NULL
+                              OR f.meta != LENGTH(COALESCE(m.subject,''))||':'||(LENGTH(COALESCE(m.body,''))+LENGTH(COALESCE(m.html_body,''))))
+                       LIMIT 400""").fetchall()
+                for (rowid,) in stale:
+                    _fts_rowid(conn, rowid)
+                gone = conn.execute(
+                    """SELECT rowid FROM msg_fts
+                       WHERE rowid NOT IN (SELECT rowid FROM messages WHERE deleted_at IS NULL)
+                       LIMIT 1000""").fetchall()
+                conn.executemany("DELETE FROM msg_fts WHERE rowid=?", [(r[0],) for r in gone])
+                conn.commit()
+            finally:
+                conn.close()
+        except Exception as e:
+            logger.error(f"fts keeper: {e}")
 
 
 def _fts_match(search):
@@ -359,7 +433,6 @@ def init_db():
         _fix_folder_sync_shape(conn)
         try:
             _ensure_fts(conn)
-            _fts_rebuild(conn)
         except Exception as e:
             logger.error(f"fts init: {e}")
         ver = conn.execute("PRAGMA user_version").fetchone()[0]
@@ -532,24 +605,6 @@ def seed(conn):
 
 
 init_db()
-
-
-def _fts_keeper():
-    last = None
-    while True:
-        time.sleep(300)   # 5 min: incremental keeper only; avoids fighting realtime writers
-        try:
-            conn = sqlite3.connect(DB_PATH, timeout=90)
-            conn.execute("PRAGMA busy_timeout=90000")
-            try:
-                sig = conn.execute("SELECT COUNT(*), COALESCE(MAX(rowid),0) FROM messages WHERE deleted_at IS NULL").fetchone()
-            finally:
-                conn.close()
-            if sig != last:
-                last = sig
-                _fts_rebuild()
-        except Exception as e:
-            logger.error(f"fts keeper: {e}")
 
 
 threading.Thread(target=_fts_keeper, daemon=True).start()
@@ -821,6 +876,7 @@ def store_ews_message(conn, user_id, aid, local_id, m):
         apply_rules(conn, user_id, mr)
     except Exception as e:
         logger.error(f"rule {mid}: {e}")
+    _fts_ensure_row(conn, mid)   # searchable immediately, not after the next keeper pass
     return True
 
 
@@ -985,6 +1041,22 @@ def first_account_connect(user_id: int):
     return None, None
 
 
+_ACCT_CACHE = {}   # user_id -> (account, ts); a fresh Account() costs 5-10s of Autodiscover
+_ACCT_TTL = 540
+
+
+def acct_cached(user_id: int):
+    acct, ts = _ACCT_CACHE.get(user_id, (None, 0))
+    if acct and time.time() - ts < _ACCT_TTL:
+        return acct
+    account, _ = first_account_connect(user_id)
+    if account:
+        _ACCT_CACHE[user_id] = (account, time.time())
+        return account
+    _ACCT_CACHE.pop(user_id, None)
+    return None
+
+
 def _find_ews_item(account, acct_row, ews_item_id: str, message_id: str = ""):
     """Recover a server Item. message_id (RFC822) is stable across moves, so search
     mail folders with it first; fall back to reconstructing from the raw EWS item id."""
@@ -1065,7 +1137,7 @@ def _ews_local_to_server_folder_id(user_id, server_name_map, folder_name):
 
 def ews_get_attachment(user_id: int, message_id: str, att_name: str) -> bytes:
     """Download one attachment's bytes from the server."""
-    account, _ = first_account_connect(user_id)
+    account = acct_cached(user_id)
     if not account:
         raise HTTPException(400, "Không kết nối được Exchange")
     item = _find_ews_item(account, None, "", message_id)
@@ -1080,7 +1152,7 @@ def ews_get_attachment(user_id: int, message_id: str, att_name: str) -> bytes:
 
 def ews_set_read(user_id: int, message_id: str, is_read: bool) -> bool:
     """Mirror read-state on Exchange (UpdateItem on the Read flag)."""
-    account, _ = first_account_connect(user_id)
+    account = acct_cached(user_id)
     if not account:
         return False
     item = _find_ews_item(account, None, "", message_id)
@@ -1798,6 +1870,10 @@ async def api_emails(folder: str = "inbox", conversation: bool = True, search: s
         params += [limit, (page - 1) * limit]
         rows = [_parse_msg(r) for r in conn.execute(q, params)]
 
+        # warm bodies for exactly these mails (the ones about to be clicked)
+        uid = user["id"]
+        threading.Thread(target=lambda: [hq_push(uid, m["id"]) for m in rows[:30]], daemon=True).start()
+
         if conversation:
             groups = {}
             for m in rows:
@@ -1826,7 +1902,7 @@ def _server_set_read_async(user_id, message_id, is_read):
     """Fire-and-forget read-state mirror: opening a mail never blocks on EWS."""
     def work():
         try:
-            account, _ = first_account_connect(user_id)
+            account = acct_cached(user_id)
             if not account:
                 return
             fid = None
@@ -1850,7 +1926,8 @@ def _server_set_read_async(user_id, message_id, is_read):
 
 def _hydrate_message(user_id, email_id):
     """Delta-sync can store items with empty bodies (SyncFolderItems ID_ONLY shape).
-    When opening such a row, fetch the full item from Exchange once and fill it in."""
+    Fetch the full item from Exchange once and fill it in. Runs on the hydrate worker
+    thread — never in the request path."""
     with get_db() as conn:
         row = conn.execute("SELECT message_id, folder_id, body, html_body FROM messages WHERE id=? AND user_id=?",
                            (email_id, user_id)).fetchone()
@@ -1858,13 +1935,20 @@ def _hydrate_message(user_id, email_id):
         return
     if not row["message_id"]:
         return
-    account, _ = first_account_connect(user_id)
+    account = acct_cached(user_id)
     if not account:
         return
     item = _find_item_in_folder_by_id(account, _conn_readonly(), row["folder_id"], row["message_id"])
     if item is None:
         item = _find_ews_item(account, None, "", row["message_id"])
     if item is None:
+        # gone on server (moved out of every scanned folder / purged) — settle the row
+        # once so it never re-queues and never keeps the click waiting 6s
+        with get_db() as conn:
+            conn.execute("UPDATE messages SET body=?, preview=? WHERE id=? AND (body='' OR body IS NULL)",
+                         ("(Thư này không còn trên server — có thể đã được di chuyển hoặc dọn dẹp.)",
+                          "(Không còn trên server)", email_id))
+            _fts_ensure_row(conn, email_id)
         return
     raw = item.body if item.body is not None else ""
     from exchangelib.properties import HTMLBody as _HTMLB
@@ -1890,6 +1974,7 @@ def _hydrate_message(user_id, email_id):
                 conn.execute("UPDATE attachments SET content_id=?, is_inline=? WHERE message_id=? AND name=? AND content_id IS NULL",
                              (cid_v, 1 if getattr(at, "is_inline", False) else 0, email_id, getattr(at, "name", "")))
     logger.info(f"hydrated {email_id} body={len(text)}")
+    _fts_ensure_row(conn, email_id)
 
 
 def _conn_readonly():
@@ -1899,8 +1984,116 @@ def _conn_readonly():
     return c
 
 
+# ─── hydration queue: instant opens, Outlook-style ────────────────────────
+# A single worker drains this FIFO; click-open pushes a PRIORITY job (front)
+# while list-scroll prefetching pushes background jobs (back).
+import queue as _queue
+
+_HQ = _queue.PriorityQueue()
+_HQ_SEQ = 0
+_HQ_INFLIGHT = set()
+
+
+def hq_push(user_id, email_id, urgent=False):
+    """Queue a body-hydration job. urgent -> jump the line. Returns True if newly queued."""
+    global _HQ_SEQ
+    with get_db() as conn:
+        r = conn.execute("SELECT body, html_body FROM messages WHERE id=? AND user_id=?", (email_id, user_id)).fetchone()
+    if not r or r["body"] or r["html_body"]:
+        return False
+    key = (user_id, email_id)
+    if key in _HQ_INFLIGHT:
+        return False
+    _HQ_SEQ += 1
+    _HQ.put((0 if urgent else 1, _HQ_SEQ, user_id, email_id))
+    return True
+
+
+def hydrate_now(user_id, email_id, timeout=6):
+    """Blocking-wait variant for the open-mail endpoint: push a priority job and
+    poll the DB up to `timeout`s. If a worker is already on this mail, just wait
+    for it instead of queueing a duplicate. Returns True if body arrived."""
+    urgent_queued = hq_push(user_id, email_id, urgent=True)
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        with get_db() as conn:
+            r = conn.execute("SELECT body, html_body FROM messages WHERE id=?", (email_id,)).fetchone()
+        if r and (r["body"] or r["html_body"]):
+            return True
+        if not urgent_queued and (user_id, email_id) not in _HQ_INFLIGHT:
+            _HQ_INFLIGHT.discard((user_id, email_id))
+            hq_push(user_id, email_id, urgent=True)   # stale queue entry -> re-queue once
+            urgent_queued = True
+        time.sleep(0.25)
+    return False
+
+
+def _hq_worker():
+    while True:
+        prio, _, user_id, email_id = _HQ.get()
+        key = (user_id, email_id)
+        _HQ_INFLIGHT.add(key)
+        try:
+            _hydrate_message(user_id, email_id)
+        except Exception as e:
+            logger.error(f"hq hydrate {email_id}: {e}")
+        finally:
+            _HQ_INFLIGHT.discard(key)
+            time.sleep(0.2)   # be gentle on EWS
+
+
+def _warm_ews(user_id):
+    """Outlook keeps its connection + folder tree hot; so do we. Without this the
+    FIRST click after boot pays a 30-60s Autodiscover+tree-walk inside the worker."""
+    account = acct_cached(user_id)
+    if not account:
+        return
+    try:
+        from realtime import _server_folders_by_name
+        _server_folders_by_name(account)   # warm the folder map used by every hydrate
+    except Exception:
+        pass
+    try:
+        with get_db() as conn:
+            r = conn.execute("SELECT id FROM messages WHERE user_id=? AND deleted_at IS NULL "
+                             "AND (body='' OR body IS NULL) LIMIT 1", (user_id,)).fetchone()
+        if r:
+            hq_push(user_id, r["id"])   # first real job primes the full path
+    except Exception:
+        pass
+
+
+def _hq_warm_boot():
+    try:
+        with get_db() as conn:
+            uids = [x["user_id"] for x in conn.execute("SELECT DISTINCT user_id FROM mail_accounts").fetchall()]
+    except Exception:
+        uids = []
+    for u in uids:
+        _warm_ews(u)
+
+
+threading.Thread(target=_hq_warm_boot, daemon=True).start()
+threading.Thread(target=_hq_worker, daemon=True).start()
+
+
+def _prefetch_recent(user_id, folder_id=None, limit=25):
+    """Warm the body cache for the newest mails of a folder — the ones the user is
+    about to click — via background hydration jobs."""
+    try:
+        with get_db() as conn:
+            q = ("SELECT id FROM messages WHERE user_id=? AND deleted_at IS NULL"
+                 + (" AND folder_id=?" if folder_id else "")
+                 + " ORDER BY date DESC LIMIT ?")
+            rows = conn.execute(q, ([user_id] + ([folder_id] if folder_id else []) + [limit])).fetchall()
+        for r in rows:
+            hq_push(user_id, r["id"])
+    except Exception:
+        pass
+
+
 @app.get("/api/emails/{email_id}")
-async def api_email_get(email_id: str, user: dict = Depends(current_user)):
+def api_email_get(email_id: str, user: dict = Depends(current_user)):
     with get_db() as conn:
         row = conn.execute("SELECT * FROM messages WHERE id=? AND user_id=?", (email_id, user["id"])).fetchone()
         if not row:
@@ -1909,16 +2102,15 @@ async def api_email_get(email_id: str, user: dict = Depends(current_user)):
         conn.execute("UPDATE messages SET is_read=1 WHERE id=?", (email_id,))
         empty = not (row["body"] or row["html_body"])
     if empty:
-        try:
-            _hydrate_message(user["id"], email_id)
-        except Exception as e:
-            logger.error(f"hydrate {email_id}: {e}")
+        hydrate_now(user["id"], email_id, timeout=6)   # priority job on the hydrator thread
     with get_db() as conn:
         row = conn.execute("SELECT * FROM messages WHERE id=?", (email_id,)).fetchone()
         m = _parse_msg(row)
         m["is_read"] = True
         m["attachments"] = [dict(r) for r in conn.execute(
             "SELECT id,name,mime_type,size,scan_state FROM attachments WHERE message_id=? AND is_inline=0", (email_id,))]
+    if empty and not (m["body"] or m["html_body"]):
+        m["hydrating"] = True    # FE keeps polling; body arrives when the job lands
     if was_unread and row["message_id"]:
         _server_set_read_async(user["id"], row["message_id"], True)
     return m
