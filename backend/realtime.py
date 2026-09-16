@@ -278,7 +278,8 @@ def _catchup_empty(user_id, limit=8):
     conn = _conn()
     try:
         rows = conn.execute("""SELECT id FROM messages WHERE user_id=? AND deleted_at IS NULL
-                               AND (body='' OR body IS NULL) AND message_id IS NOT NULL
+                               AND (body='' OR body IS NULL) AND (html_body='' OR html_body IS NULL)
+                               AND message_id IS NOT NULL
                                ORDER BY date DESC LIMIT ?""", (user_id, limit)).fetchall()
     finally:
         conn.close()

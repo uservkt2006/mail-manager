@@ -2056,7 +2056,7 @@ def _warm_ews(user_id):
     try:
         with get_db() as conn:
             r = conn.execute("SELECT id FROM messages WHERE user_id=? AND deleted_at IS NULL "
-                             "AND (body='' OR body IS NULL) LIMIT 1", (user_id,)).fetchone()
+                             "AND (body='' OR body IS NULL) AND (html_body='' OR html_body IS NULL) LIMIT 1", (user_id,)).fetchone()
         if r:
             hq_push(user_id, r["id"])   # first real job primes the full path
     except Exception:
