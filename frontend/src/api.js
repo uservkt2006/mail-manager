@@ -43,6 +43,7 @@ export const api = {
   emptyFolder: (id) => req('POST', `/folders/${id}/empty`),
   markFolderRead: (id) => req('POST', `/folders/${id}/read`),
   thread: (tid) => req('GET', `/thread?tid=${encodeURIComponent(tid)}`),
+  suggest: (q) => req('GET', `/suggest?q=${encodeURIComponent(q)}`),
   realtimeSet: (enabled) => req('POST', '/realtime', { enabled }),
   deleteFolder: (id) => req('DELETE', `/folders/${id}`),
   emails: (params) => req('GET', '/emails?' + params),

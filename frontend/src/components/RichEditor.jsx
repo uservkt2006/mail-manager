@@ -7,7 +7,7 @@ import { Bold, Italic, Underline, Palette } from 'lucide-react'
 const FONTS = ['Calibri', 'Arial', 'Times New Roman', 'Tahoma', 'Verdana', 'JetBrains Mono']
 const SIZES = [{ px: '12', v: '2' }, { px: '13', v: '3' }, { px: '14', v: '4' }, { px: '16', v: '5' }, { px: '18', v: '6' }, { px: '24', v: '7' }]
 
-export default function RichEditor({ html, onChange, onPasteFiles, fontFamily = 'Calibri', fontSize = '14px', minHeight = 180, placeholder = 'Nội dung…' }) {
+export default function RichEditor({ html, onChange, onPasteFiles, fontFamily = 'Calibri', fontSize = '14px', minHeight = 180, placeholder = 'Nội dung…', toolbarBottom = false }) {
   const ref = useRef(null)
   const focusedRef = useRef(false)
 
@@ -38,31 +38,34 @@ export default function RichEditor({ html, onChange, onPasteFiles, fontFamily = 
     }
   }
 
-  return (
-    <div className="border border-dark-border rounded-md bg-dark-bg overflow-hidden">
-      <div className="flex items-center gap-1 px-2 py-1 border-b border-dark-border bg-dark-surface flex-wrap">
-        <button type="button" onMouseDown={e => e.preventDefault()} onClick={() => exec('bold')} title="Đậm"
-          className="p-1 rounded hover:bg-dark-hover text-ink-dim"><Bold size={13} /></button>
-        <button type="button" onMouseDown={e => e.preventDefault()} onClick={() => exec('italic')} title="Nghiêng"
-          className="p-1 rounded hover:bg-dark-hover text-ink-dim"><Italic size={13} /></button>
-        <button type="button" onMouseDown={e => e.preventDefault()} onClick={() => exec('underline')} title="Gạch chân"
-          className="p-1 rounded hover:bg-dark-hover text-ink-dim"><Underline size={13} /></button>
-        <input type="color" title="Màu chữ" onMouseDown={e => e.stopPropagation()}
-          onChange={e => exec('foreColor', e.target.value)}
-          className="w-5 h-5 bg-transparent border border-dark-border rounded cursor-pointer p-0" />
-        <span className="w-px h-4 bg-dark-border mx-1" />
-        <select value={fontFamily} onChange={e => exec('fontName', e.target.value)} title="Phông chữ"
-          className="bg-transparent text-[11px] text-ink-dim border border-dark-border rounded px-1 py-0.5 focus:outline-none">
-          {FONTS.map(f => <option key={f} value={f} className="bg-dark-surface">{f}</option>)}
-        </select>
-        <select onChange={e => { document.execCommand('styleWithCSS', false, true); exec('fontSize', e.target.value) }} value="" title="Cỡ chữ"
-          className="bg-transparent text-[11px] text-ink-dim border border-dark-border rounded px-1 py-0.5 focus:outline-none">
-          <option value="" disabled>Aa</option>
-          {SIZES.map(s => <option key={s.px} value={s.v} className="bg-dark-surface">{s.px}</option>)}
-        </select>
-        <span className="flex-1" />
-        <Palette size={12} className="text-ink-mute opacity-50" />
-      </div>
+  const Toolbar = (
+    <div className="flex items-center gap-1 px-2 py-1 border-b border-dark-bg bg-dark-surface flex-wrap">
+      <button type="button" onMouseDown={e => e.preventDefault()} onClick={() => exec('bold')} title="Đậm"
+        className="p-1 rounded hover:bg-dark-hover text-ink-dim"><Bold size={13} /></button>
+      <button type="button" onMouseDown={e => e.preventDefault()} onClick={() => exec('italic')} title="Nghiêng"
+        className="p-1 rounded hover:bg-dark-hover text-ink-dim"><Italic size={13} /></button>
+      <button type="button" onMouseDown={e => e.preventDefault()} onClick={() => exec('underline')} title="Gạch chân"
+        className="p-1 rounded hover:bg-dark-hover text-ink-dim"><Underline size={13} /></button>
+      <input type="color" title="Màu chữ" onMouseDown={e => e.stopPropagation()}
+        onChange={e => exec('foreColor', e.target.value)}
+        className="w-5 h-5 bg-transparent border border-dark-border rounded cursor-pointer p-0" />
+      <span className="w-px h-4 bg-dark-border mx-1" />
+      <select value={fontFamily} onChange={e => exec('fontName', e.target.value)} title="Phông chữ"
+        className="bg-transparent text-[11px] text-ink-dim border border-dark-border rounded px-1 py-0.5 focus:outline-none">
+        {FONTS.map(f => <option key={f} value={f} className="bg-dark-surface">{f}</option>)}
+      </select>
+      <select onChange={e => { document.execCommand('styleWithCSS', false, true); exec('fontSize', e.target.value) }} value="" title="Cỡ chữ"
+        className="bg-transparent text-[11px] text-ink-dim border border-dark-border rounded px-1 py-0.5 focus:outline-none">
+        <option value="" disabled>Aa</option>
+        {SIZES.map(s => <option key={s.px} value={s.v} className="bg-dark-surface">{s.px}</option>)}
+      </select>
+      <span className="flex-1" />
+      <Palette size={12} className="text-ink-mute opacity-50" />
+    </div>
+  )
+
+  const Content = (
+    <div className="px-3 py-2.5 text-ink overflow-y-auto flex-1 min-h-0">
       <div
         ref={ref}
         contentEditable
@@ -73,9 +76,15 @@ export default function RichEditor({ html, onChange, onPasteFiles, fontFamily = 
         onInput={() => onChange?.(ref.current?.innerHTML || '')}
         onPaste={handlePaste}
         onDrop={e => { if (onPasteFiles && e.dataTransfer?.files?.length) { e.preventDefault(); onPasteFiles([...e.dataTransfer.files]) } }}
-        className="rich-editor-content px-3 py-2.5 text-ink focus:outline-none overflow-y-auto"
+        className="rich-editor-content focus:outline-none"
         style={{ fontFamily, fontSize, minHeight }}
       />
+    </div>
+  )
+
+  return (
+    <div className="border border-dark-border rounded-md bg-dark-bg overflow-hidden flex flex-col">
+      {toolbarBottom ? <>{Toolbar}{Content}</> : <>{Content}{Toolbar}</>}
     </div>
   )
 }

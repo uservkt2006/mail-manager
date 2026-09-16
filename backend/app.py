@@ -2160,8 +2160,12 @@ async def api_compose(req: ComposeReq, user: dict = Depends(current_user)):
     tid = req.thread_id or f"th-{secrets.token_hex(6)}"
     body = req.body
     sig_html = get_settings(user["id"]).get("signature_html", "")
-    if req.send and (sig_html or get_settings(user["id"]).get("signature", "")):
-        body = body + "<br><br>-- <br>" + (sig_html or get_settings(user["id"]).get("signature", ""))
+    if req.send and sig_html and sig_html not in body:
+        body = body + "<br><br>--&nbsp;<br>" + sig_html
+    elif req.send and not sig_html:
+        sig = get_settings(user["id"]).get("signature", "")
+        if sig and sig not in body:
+            body = body + "<br><br>-- <br>" + sig.replace("\n", "<br>")
     server_ok = None
     with get_db() as conn:
         ftype = "sent" if req.send else "drafts"
@@ -2330,6 +2334,30 @@ async def api_task_del(tid: str, user: dict = Depends(current_user)):
 
 
 # ─── contacts ─────────────────────────────────────────────────────────
+@app.get("/api/suggest")
+async def api_suggest(q: str = "", limit: int = 8, user: dict = Depends(current_user)):
+    """Outlook-style name picker: contacts + past correspondents matching q."""
+    q = (q or "").strip()
+    if len(q) < 1:
+        return {"suggestions": []}
+    qn = f"%{q}%"
+    out = {}
+    with get_db() as conn:
+        for r in conn.execute("SELECT name,email FROM contacts WHERE user_id=? AND (name LIKE ? OR email LIKE ?) LIMIT 20",
+                              (user["id"], qn, qn)):
+            e = (r["email"] or "").strip().lower()
+            if e:
+                out.setdefault(e, (r["name"] or "").strip() or e)
+        for r in conn.execute('SELECT DISTINCT "from" f FROM messages WHERE user_id=? AND "from" LIKE ? LIMIT 20',
+                              (user["id"], qn)):
+            e = _addr_email(r["f"])
+            nm = (r["f"] or "").split("<")[0].strip()
+            if e:
+                out.setdefault(e.lower(), nm or e)
+    items = [{"email": e, "name": n} for e, n in list(out.items())[:limit]]
+    return {"suggestions": items}
+
+
 @app.get("/api/contacts")
 async def api_contacts(user: dict = Depends(current_user)):
     with get_db() as conn:
