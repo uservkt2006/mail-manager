@@ -8,9 +8,16 @@ export default function StatusBar({ itemInfo, online, onRefresh, hasAccount, rea
   const [syncing, setSyncing] = useState(false)
   const [note, setNote] = useState(null)
 
-  // flash incoming realtime events briefly
+  // flash incoming realtime events briefly; folder-empty jobs get a live progress line
+  const [emptyJob, setEmptyJob] = useState(null)
   useEffect(() => {
     if (!realtime) return
+    if (realtime.type === 'empty_progress') {
+      setEmptyJob(realtime)
+      if (realtime.state === 'done') setTimeout(() => setEmptyJob(null), 6000)
+      return
+    }
+    setEmptyJob(null)
     setNote(realtime.type === 'new_mail' ? `📩 Thư mới: ${(realtime.subject || '').slice(0, 60)}` : 'Hộp thư vừa cập nhật')
     const t = setTimeout(() => setNote(null), 8000)
     return () => clearTimeout(t)
@@ -42,6 +49,19 @@ export default function StatusBar({ itemInfo, online, onRefresh, hasAccount, rea
     <div className="h-7 flex-shrink-0 bg-dark-surface border-t border-dark-border flex items-center px-3 gap-4 text-[11px] text-ink-dim select-none">
       <span>{itemInfo}</span>
       <div className="flex-1" />
+      {emptyJob && (
+        <span className="flex items-center gap-2 text-amber-400" title="Đang xóa toàn bộ thư trên server Exchange">
+          <RefreshCw size={10} className={emptyJob.state === 'done' ? '' : 'animate-spin'} />
+          {emptyJob.state === 'done'
+            ? <>Xóa hoàn tất: “{emptyJob.folder}” · {emptyJob.server} thư trên server</>
+            : <>Đang xóa “{emptyJob.folder}”… {Math.min(emptyJob.done, emptyJob.total)}/{emptyJob.total}</>}
+          {emptyJob.total > 0 && emptyJob.state !== 'done' && (
+            <span className="inline-block w-24 h-1 bg-dark-border rounded overflow-hidden">
+              <span className="block h-full bg-amber-400 transition-all" style={{ width: `${Math.round(100 * Math.min(emptyJob.done, emptyJob.total) / Math.max(1, emptyJob.total))}%` }} />
+            </span>
+          )}
+        </span>
+      )}
       {note && <span className="text-primary">{note}</span>}
       {hasAccount && (
         <span className="flex items-center gap-1 text-emerald-500/80" title="Delta sync: mail mới tự xuất hiện sau vài giây">

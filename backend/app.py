@@ -283,9 +283,80 @@ def _fix_folder_sync_shape(conn):
             "PRIMARY KEY (user_id, folder_path));")
 
 
+def _fold_vi(s):
+    """Strip Vietnamese diacritics: 'hợp đồng' -> 'hop dong' (search both ways)."""
+    import unicodedata
+    d = unicodedata.normalize('NFD', s or '')
+    d = ''.join(ch for ch in d if not unicodedata.combining(ch))
+    return d.replace('đ', 'd').replace('Đ', 'D')
+
+
+def _ensure_fts(conn):
+    """FTS5 index over mail text with Vietnamese folding (hợp đồng <-> hop dong,
+    incl. đ->d which sqlite's remove_diacritics misses). Plain table; rowid = messages.rowid.
+    Rebuilt wholesale by _fts_rebuild (startup + every 60s + after syncs) — no triggers."""
+    old = conn.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='msg_fts'").fetchone()
+    if old and ("content='messages'" in (old[0] or '') or 'f_body' not in (old[0] or '')):
+        conn.execute("DROP TABLE msg_fts")
+    conn.execute("""CREATE VIRTUAL TABLE IF NOT EXISTS msg_fts USING fts5(
+        subject, sender, recipients, preview, body,
+        f_subject, f_sender, f_recipients, f_preview, f_body,
+        tokenize="unicode61 remove_diacritics 2")""")
+
+
+def _fts_rebuild(conn=None):
+    """Reindex all live messages; folded columns strip every Vietnamese accent incl. đ."""
+    own = conn is None
+    if own:
+        conn = get_db()
+    t0 = time.time()
+    rows = conn.execute(
+        """SELECT rowid, coalesce(subject,''), coalesce("from",''),
+                  coalesce("to",'')||' '||coalesce(cc,'')||' '||coalesce(bcc,''),
+                  coalesce(preview,''), coalesce(body,'')||' '||coalesce(html_body,'')
+           FROM messages WHERE deleted_at IS NULL""").fetchall()
+    conn.execute("DELETE FROM msg_fts")
+    conn.executemany(
+        "INSERT INTO msg_fts(rowid,subject,sender,recipients,preview,body,f_subject,f_sender,f_recipients,f_preview,f_body) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+        [(r[0], r[1], r[2], r[3], r[4], r[5],
+          _fold_vi(r[1]), _fold_vi(r[2]), _fold_vi(r[3]), _fold_vi(r[4]), _fold_vi(r[5])) for r in rows])
+    if own:
+        conn.commit()
+    logger.info(f"fts rebuilt: {len(rows)} docs in {time.time()-t0:.1f}s")
+
+
+def _fts_match(search):
+    """Parse 'from:x to:y subject:z free' into an FTS5 MATCH (AND of terms, prefix as-you-type).
+    Unaccented query searches the folded columns; accented query the raw ones."""
+    folded = (_fold_vi(search) == search)   # query itself has no diacritics -> match folded cols
+    cols = tuple(('f_' + c if folded else c) for c in ('subject', 'sender', 'recipients', 'preview', 'body'))
+    parts = []
+    for tok in (search or '').split():
+        low = tok.lower()
+        col = None
+        for pfx, c in (('from:', 'sender'), ('sender:', 'sender'),
+                       ('to:', 'recipients'), ('cc:', 'recipients'), ('bc:', 'recipients'),
+                       ('subject:', 'subject'), ('title:', 'subject')):
+            if low.startswith(pfx) and len(tok) > len(pfx):
+                col, tok = c, tok[len(pfx):]
+                break
+        val = (_fold_vi if folded else (lambda s: s))(tok.strip('"').replace('"', ' ').strip())
+        if not val:
+            continue
+        q = '"' + val + '"' + '*'
+        parts.append(f'{cols[("subject", "sender", "recipients").index(col)]}:{q}'
+                     if col else '(' + ' OR '.join(f'{c}:{q}' for c in cols) + ')')
+    return ' AND '.join(parts)
+
+
 def init_db():
     with get_db() as conn:
         _fix_folder_sync_shape(conn)
+        try:
+            _ensure_fts(conn)
+            _fts_rebuild(conn)
+        except Exception as e:
+            logger.error(f"fts init: {e}")
         ver = conn.execute("PRAGMA user_version").fetchone()[0]
         if ver >= SCHEMA_VERSION:
             return
@@ -456,6 +527,23 @@ def seed(conn):
 
 
 init_db()
+
+
+def _fts_keeper():
+    last = None
+    while True:
+        time.sleep(45)
+        try:
+            with get_db() as c:
+                sig = c.execute("SELECT COUNT(*), COALESCE(MAX(rowid),0), COALESCE(SUM(LENGTH(subject)+LENGTH(body)),0) FROM messages WHERE deleted_at IS NULL").fetchone()
+            if sig != last:
+                last = sig
+                _fts_rebuild()
+        except Exception as e:
+            logger.error(f"fts keeper: {e}")
+
+
+threading.Thread(target=_fts_keeper, daemon=True).start()
 
 # realtime: resume delta-sync workers on boot for users that have an Exchange account
 # and haven't disabled "Tự động đồng bộ"
@@ -998,6 +1086,7 @@ def ews_set_read(user_id: int, message_id: str, is_read: bool) -> bool:
         return False
 
 
+_EMPTY_JOBS = {}   # job_id -> {folder,total,done,server,state} for folder-empty progress
 _srvfolder_cache = {}   # key -> {name: folder}
 _srvfolder_ts = {}
 
@@ -1513,32 +1602,100 @@ async def api_folder_rename(fid: int, req: FolderRename, user: dict = Depends(cu
 
 @app.post("/api/folders/{fid}/empty")
 async def api_folder_empty(fid: int, user: dict = Depends(current_user)):
-    """Delete every message inside (server-side delete too — Outlook 'Empty Folder')."""
+    """Outlook 'Empty Folder': local move-to-trash + server-side empty, reported as a
+    background job with progress events (SSE 'empty_progress' + GET /api/empty/<job>)."""
     with get_db() as conn:
-        f = conn.execute("SELECT id FROM folders WHERE id=? AND user_id=?", (fid, user["id"])).fetchone()
+        f = conn.execute("SELECT id, name FROM folders WHERE id=? AND user_id=?", (fid, user["id"])).fetchone()
         if not f:
             raise HTTPException(404, "Không tìm thấy thư mục")
-        rows = conn.execute("SELECT message_id FROM messages WHERE folder_id=? AND user_id=? AND deleted_at IS NULL",
+        rows = conn.execute("SELECT message_id, ews_item_id FROM messages WHERE folder_id=? AND user_id=? AND deleted_at IS NULL",
                             (fid, user["id"])).fetchall()
         mids = [r["message_id"] for r in rows if r["message_id"]]
+        rawids = [r["ews_item_id"] for r in rows if r["ews_item_id"]]
         conn.execute("UPDATE messages SET deleted_at=?, folder_id=? WHERE folder_id=? AND user_id=? AND deleted_at IS NULL",
                      (now_iso(), get_or_create_folder(conn, user["id"], "trash"), fid, user["id"]))
         audit(conn, user["id"], "folder.empty", str(fid), str(len(mids)))
-    srv_n = 0
+    job = _empty_job_new(user["id"], f["name"], len(mids))
+    threading.Thread(target=_empty_job_run, args=(job, user["id"], f["name"], mids, rawids), daemon=True).start()
+    return {"success": True, "job": job, "total": len(mids)}
+
+
+def _empty_job_new(uid, name, total):
+    job = "job-" + secrets.token_hex(6)
+    _EMPTY_JOBS[job] = {"id": job, "user_id": uid, "folder": name, "total": total, "done": 0,
+                        "server": 0, "state": "running", "started": time.time()}
+    _empty_publish(job)
+    return job
+
+
+def _empty_publish(job):
+    j = _EMPTY_JOBS.get(job) or {}
     try:
-        account, _ = first_account_connect(user["id"])
-        if account:
-            for mid in mids[:200]:
-                try:
-                    item = _find_ews_item(account, None, "", mid)
-                    if item:
-                        item.delete()
-                        srv_n += 1
-                except Exception:
-                    pass
+        from . import realtime
+    except ImportError:
+        import realtime
+    realtime.publish(j.get("user_id", 0), {"type": "empty_progress", "job": job, "folder": j.get("folder"),
+                                            "total": j.get("total"), "done": j.get("done"),
+                                            "server": j.get("server"), "state": j.get("state")})
+
+
+def _empty_bump(job, done=None, server=None, state=None):
+    j = _EMPTY_JOBS.get(job)
+    if not j:
+        return
+    if done is not None: j["done"] = done
+    if server is not None: j["server"] = server
+    if state is not None: j["state"] = state
+    _empty_publish(job)
+
+
+def _empty_job_run(job, uid, name, mids, rawids):
+    """Server side: try the single-shot EWS EmptyFolder (exactly what Outlook does),
+    fall back to chunked item deletes. Local rows already trashed; 'done' counts server work."""
+    total = len(mids)
+    try:
+        account, _ = first_account_connect(uid)
+        if not account:
+            _empty_bump(job, done=total, state="done")
+            return
+        sf = _find_server_folder(account, [name])
+        if sf is not None and hasattr(sf, "empty"):
+            try:
+                sf.empty()
+                _empty_bump(job, done=total, server=total, state="done")
+                return
+            except Exception as e:
+                logger.warning(f"empty folder single-shot failed: {e}")
+        n = 0
+        CHUNK = 100
+        for i in range(0, len(rawids), CHUNK):
+            try:
+                account.bulk_delete([(x, None) for x in rawids[i:i + CHUNK]])
+                n += len(rawids[i:i + CHUNK])
+            except Exception:
+                for x in rawids[i:i + CHUNK]:
+                    try:
+                        _find_ews_item(account, None, x).delete(); n += 1
+                    except Exception:
+                        pass
+            _empty_bump(job, done=min(n, total), server=n)
+        _empty_bump(job, done=total, server=n, state="done")
     except Exception as e:
-        logger.error(f"folder empty server: {e}")
-    return {"success": True, "moved_local": len(rows), "deleted_server": srv_n}
+        logger.error(f"folder empty job: {e}")
+        _empty_bump(job, done=total, state="done")
+    finally:
+        try:
+            threading.Timer(60, lambda: _EMPTY_JOBS.pop(job, None)).start()
+        except Exception:
+            pass
+
+
+@app.get("/api/empty/{job}")
+async def api_empty_status(job: str, user: dict = Depends(current_user)):
+    j = _EMPTY_JOBS.get(job)
+    if not j or j["user_id"] != user["id"]:
+        raise HTTPException(404, "Job not found")
+    return {k: v for k, v in j.items() if k != "user_id"}
 
 
 @app.delete("/api/folders/{fid}")
@@ -1599,8 +1756,13 @@ async def api_emails(folder: str = "inbox", conversation: bool = True, search: s
             if sj.get("category"):
                 q += " AND m.categories LIKE ?"; params.append(f"%{sj['category']}%")
             if sj.get("search"):
-                q += ' AND (m.subject LIKE ? OR m."from" LIKE ? OR m.preview LIKE ? OR m.body LIKE ?)'
-                s = f"%{sj['search']}%"; params += [s] * 4
+                fx = _fts_match(sj["search"])
+                if fx:
+                    q += " AND m.rowid IN (SELECT rowid FROM msg_fts WHERE msg_fts MATCH ?)"
+                    params.append(fx)
+                else:
+                    q += ' AND (m.subject LIKE ? OR m."from" LIKE ? OR m.preview LIKE ? OR m.body LIKE ?)'
+                    s = f"%{sj['search']}%"; params += [s] * 4
         elif folder and folder != "all":
             fq = conn.execute("SELECT id FROM folders WHERE user_id=? AND (type=? OR id=? OR name=?)",
                               (user["id"], folder, folder if folder.isdigit() else -1, folder)).fetchone()
@@ -1608,8 +1770,13 @@ async def api_emails(folder: str = "inbox", conversation: bool = True, search: s
                 raise HTTPException(404, "Folder not found")
             q += " AND m.folder_id=?"; params.append(fq["id"])
         if search:
-            q += ' AND (subject LIKE ? OR "from" LIKE ? OR preview LIKE ? OR body LIKE ?)'
-            s = f"%{search}%"; params += [s] * 4
+            fx = _fts_match(search)
+            if fx:
+                q += " AND m.rowid IN (SELECT rowid FROM msg_fts WHERE msg_fts MATCH ?)"
+                params.append(fx)
+            else:
+                q += ' AND (m.subject LIKE ? OR m."from" LIKE ? OR m.preview LIKE ? OR m.body LIKE ?)'
+                s = f"%{search}%"; params += [s] * 4
         if category:
             q += " AND categories LIKE ?"; params.append(f"%{category}%")
         if starred:
@@ -2279,11 +2446,18 @@ async def api_stats(user: dict = Depends(current_user)):
 @app.get("/api/search")
 async def api_search(q: str, user: dict = Depends(current_user)):
     s = f"%{q}%"
+    fx = _fts_match(q)
     with get_db() as conn:
-        msgs = [ _parse_msg(r) for r in conn.execute(
-            'SELECT m.*, f.name folder_name FROM messages m LEFT JOIN folders f ON f.id=m.folder_id '
-            'WHERE m.user_id=? AND m.deleted_at IS NULL AND (m.subject LIKE ? OR m."from" LIKE ? OR m.body LIKE ?) '
-            'ORDER BY m.date DESC LIMIT 20', (user["id"], s, s, s))]
+        if fx:
+            msgs = [_parse_msg(r) for r in conn.execute(
+                'SELECT m.*, f.name folder_name FROM messages m LEFT JOIN folders f ON f.id=m.folder_id '
+                'WHERE m.user_id=? AND m.deleted_at IS NULL AND m.rowid IN (SELECT rowid FROM msg_fts WHERE msg_fts MATCH ?) '
+                'ORDER BY m.date DESC LIMIT 20', (user["id"], fx))]
+        else:
+            msgs = [ _parse_msg(r) for r in conn.execute(
+                'SELECT m.*, f.name folder_name FROM messages m LEFT JOIN folders f ON f.id=m.folder_id '
+                'WHERE m.user_id=? AND m.deleted_at IS NULL AND (m.subject LIKE ? OR m."from" LIKE ? OR m.body LIKE ?) '
+                'ORDER BY m.date DESC LIMIT 20', (user["id"], s, s, s))]
         contacts = [dict(r) for r in conn.execute(
             "SELECT * FROM contacts WHERE user_id=? AND (name LIKE ? OR email LIKE ?) LIMIT 10",
             (user["id"], s, s))]

@@ -39,7 +39,7 @@ export default function TopBar({ onOpenResults }) {
           value={q}
           onChange={e => setQ(e.target.value)}
           onKeyDown={e => { if (e.key === 'Enter') run(); if (e.key === 'Escape') setOpen(false) }}
-          placeholder="Tìm kiếm mail, người, việc, lịch… ( / )"
+          placeholder="Tìm mail, người, việc, lịch… · from: · to: · cc: ( / )"
           className="w-full bg-dark-bg border border-dark-border rounded-md pl-9 pr-3 py-1.5 text-sm text-ink placeholder-gray-600 focus:outline-none focus:border-primary"
         />
         {open && results && (

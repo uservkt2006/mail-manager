@@ -48,7 +48,7 @@ export default function EmailList({
         </div>
         <div className="relative mb-2">
           <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-ink-mute" />
-          <input value={searchTerm} onChange={e => onSearchChange(e.target.value)} placeholder="Lọc trong thư mục này…"
+          <input value={searchTerm} onChange={e => onSearchChange(e.target.value)} placeholder="Lọc: từ khóa · from:ten · to:ai · subject:… (Enter)"
             className="w-full bg-dark-bg border border-dark-border rounded-md pl-8 pr-3 py-1.5 text-xs text-ink placeholder-ink-mute focus:outline-none focus:border-primary" />
         </div>
         <div className="flex flex-wrap gap-1">

@@ -9,9 +9,12 @@ import SearchFolderModal from './SearchFolderModal'
 import RuleModal from './RuleModal'
 import ThreadView from './ThreadView'
 import { Group, Panel, Separator, useDefaultLayout } from 'react-resizable-panels'
-import { Archive, Trash2, Star, Mail, MailOpen, Flag, Tag, Share2, CornerUpLeft, CornerUpRight, FolderInput, CheckCheck, Zap } from 'lucide-react'
+import { Archive, Trash2, Star, Mail, MailOpen, Flag, Tag, Share2, CornerUpLeft, CornerUpRight, FolderInput, CheckCheck, Zap, Copy, Search, UserPlus } from 'lucide-react'
 import { api } from '../api'
 import { getDensity, getReadingPane } from '../theme'
+
+const senderEmail = (e) => (e.from || '').match(/<([^>]+)>/)?.[1] || ''
+const senderName = (e) => (e.from || '').split('<')[0].trim() || senderEmail(e)
 
 export default function MailView({ user, catMeta: catMetaProp, onOpenSettings }) {
   const [catMeta, setCatMeta] = useState(catMetaProp)
@@ -43,6 +46,12 @@ export default function MailView({ user, catMeta: catMetaProp, onOpenSettings })
     setTimeout(() => setToast(null), 5000)
   }
 
+  const copyMail = async (e) => {
+    const txt = `Từ: ${e.from}\nTới: ${e.to || ''}\nCc: ${e.cc || ''}\nChủ đề: ${e.subject}\nNgày: ${e.date}\n\n${e.body || ''}`
+    try { await navigator.clipboard.writeText(txt); showToast('Đã copy nội dung thư vào clipboard') }
+    catch { showToast('Không copy được (clipboard bị chặn)') }
+  }
+
   const loadSf = useCallback(() => { api.searchFolders().then(setSearchFolders).catch(() => {}) }, [])
 
   const loadTree = useCallback(async () => {
@@ -67,7 +76,11 @@ export default function MailView({ user, catMeta: catMetaProp, onOpenSettings })
   }, [activeFolder, conversation, search, category])
 
   useEffect(() => { loadTree(); loadSf() }, [])
-  useEffect(() => { loadEmails() }, [loadEmails])
+  const deb = search ? 200 : 0   // debounce typing; instant when cleared
+  useEffect(() => {
+    const t = setTimeout(loadEmails, deb)
+    return () => clearTimeout(t)
+  }, [loadEmails, deb])
 
 
   useEffect(() => {
@@ -172,6 +185,10 @@ export default function MailView({ user, catMeta: catMetaProp, onOpenSettings })
     { label: 'Trả lời', icon: CornerUpLeft, onClick: () => setCompose({ replyTo: email, mode: 'reply' }) },
     { label: 'Trả lời tất cả', icon: CornerUpRight, onClick: () => setCompose({ replyTo: email, mode: 'reply_all' }) },
     { label: 'Chuyển tiếp', icon: Share2, onClick: () => setCompose({ replyTo: email, mode: 'forward' }) },
+    { sep: true },
+    { label: 'Copy', icon: Copy, onClick: () => copyMail(email) },
+    { label: 'Tìm theo người gửi này', icon: Search, onClick: () => setSearch(`from:${senderEmail(email) || senderName(email)}`) },
+    { label: 'Quy tắc cho người gửi này…', icon: UserPlus, onClick: () => setRuleFor({ ...email, from: senderEmail(email) }) },
     { sep: true },
     { label: 'Cờ theo dõi', icon: Flag, submenu: [
       { label: 'Hôm nay', onClick: () => { const d = new Date(); d.setHours(17, 0, 0, 0); actFlag(email.id, d.toISOString()) } },

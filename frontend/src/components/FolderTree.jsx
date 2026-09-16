@@ -73,10 +73,10 @@ export default function FolderTree({ tree, activeFolderId, onSelect, onChanged, 
       out.push({ label: 'Đổi tên…', icon: PenLine, onClick: () => rename(node) })
       out.push({ label: 'Xóa tất cả thư trong này', icon: Trash2, danger: true,
         onClick: async () => {
-          if (!confirm(`Xóa TOÀN BỘ thư trong "${node.name}" (cả trên Exchange)?`) ) return
-          const r = await api.emptyFolder(node.id)
+          if (!confirm(`Xóa TOÀN BỘ thư trong "${node.name}" (cả trên Exchange)?`)) return
+          await api.emptyFolder(node.id)
           onChanged?.()
-          alert(`Đã xóa: ${r.deleted_server} trên server, ${r.moved_local} ở local (vào Thùng rác)`)
+          // progress + "Xóa hoàn tất" shown live in StatusBar via SSE empty_progress
         } })
       out.push({ label: 'Xóa thư mục', icon: X, danger: true,
         onClick: async () => {
