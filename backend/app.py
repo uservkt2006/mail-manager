@@ -308,7 +308,8 @@ def _fts_rebuild(conn=None):
     """Reindex all live messages; folded columns strip every Vietnamese accent incl. đ."""
     own = conn is None
     if own:
-        conn = get_db()
+        conn = sqlite3.connect(DB_PATH, timeout=60)
+        conn.execute("PRAGMA busy_timeout=60000")
     t0 = time.time()
     rows = conn.execute(
         """SELECT rowid, coalesce(subject,''), coalesce("from",''),
@@ -316,10 +317,14 @@ def _fts_rebuild(conn=None):
                   coalesce(preview,''), coalesce(body,'')||' '||coalesce(html_body,'')
            FROM messages WHERE deleted_at IS NULL""").fetchall()
     conn.execute("DELETE FROM msg_fts")
-    conn.executemany(
-        "INSERT INTO msg_fts(rowid,subject,sender,recipients,preview,body,f_subject,f_sender,f_recipients,f_preview,f_body) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-        [(r[0], r[1], r[2], r[3], r[4], r[5],
-          _fold_vi(r[1]), _fold_vi(r[2]), _fold_vi(r[3]), _fold_vi(r[4]), _fold_vi(r[5])) for r in rows])
+    conn.commit()
+    args = [(r[0], r[1], r[2], r[3], r[4], r[5],
+             _fold_vi(r[1]), _fold_vi(r[2]), _fold_vi(r[3]), _fold_vi(r[4]), _fold_vi(r[5])) for r in rows]
+    for i in range(0, len(args), 200):   # commit in chunks: never hold the write lock too long
+        conn.executemany(
+            "INSERT INTO msg_fts(rowid,subject,sender,recipients,preview,body,f_subject,f_sender,f_recipients,f_preview,f_body) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            args[i:i + 200])
+        conn.commit()
     if own:
         conn.commit()
     logger.info(f"fts rebuilt: {len(rows)} docs in {time.time()-t0:.1f}s")
@@ -532,10 +537,14 @@ init_db()
 def _fts_keeper():
     last = None
     while True:
-        time.sleep(45)
+        time.sleep(300)   # 5 min: incremental keeper only; avoids fighting realtime writers
         try:
-            with get_db() as c:
-                sig = c.execute("SELECT COUNT(*), COALESCE(MAX(rowid),0), COALESCE(SUM(LENGTH(subject)+LENGTH(body)),0) FROM messages WHERE deleted_at IS NULL").fetchone()
+            conn = sqlite3.connect(DB_PATH, timeout=90)
+            conn.execute("PRAGMA busy_timeout=90000")
+            try:
+                sig = conn.execute("SELECT COUNT(*), COALESCE(MAX(rowid),0) FROM messages WHERE deleted_at IS NULL").fetchone()
+            finally:
+                conn.close()
             if sig != last:
                 last = sig
                 _fts_rebuild()
@@ -1563,7 +1572,7 @@ async def api_folder_create(req: FolderCreate, user: dict = Depends(current_user
             sf = _find_server_folder(account, [parent_name]) if parent_name else account.inbox
             if sf is not None:
                 from exchangelib.folders import Folder
-                Folder(parent=sf, account=account, name=nfck(req.name)).create()
+                Folder(parent=sf, name=nfck(req.name)).create()
                 srv = True
     except Exception as e:
         logger.error(f"server folder create {req.name}: {e}")

@@ -153,6 +153,7 @@ def _apply_delta(user_id, a, conn, by_name, row):
                                           "ts": time.time()})
                     elif change_type == "update":
                         publish(user_id, {"type": "changed", "ts": time.time()})
+                    conn.commit()   # don't hold the write lock across the next network refresh()
             except Exception as e:
                 logger.error(f"delta apply {path[-1]}: {e}")
     if new_state and new_state != row["ews_sync_state"]:
