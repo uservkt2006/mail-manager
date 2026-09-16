@@ -520,6 +520,7 @@ class ComposeReq(BaseModel):
     thread_id: Optional[str] = None
     in_reply_to: Optional[str] = None
     attachments: list = []          # [{name, content_base64, content_type}]
+    sig_added: bool = False         # compose UI already placed the signature
 
 
 class ReplyReq(BaseModel):
@@ -2159,13 +2160,10 @@ async def api_compose(req: ComposeReq, user: dict = Depends(current_user)):
     mid = f"ms-{secrets.token_hex(6)}"
     tid = req.thread_id or f"th-{secrets.token_hex(6)}"
     body = req.body
-    sig_html = get_settings(user["id"]).get("signature_html", "")
-    if req.send and sig_html and sig_html not in body:
+    st = get_settings(user["id"])
+    sig_html = st.get("signature_html", "")
+    if req.send and sig_html and not req.sig_added:
         body = body + "<br><br>--&nbsp;<br>" + sig_html
-    elif req.send and not sig_html:
-        sig = get_settings(user["id"]).get("signature", "")
-        if sig and sig not in body:
-            body = body + "<br><br>-- <br>" + sig.replace("\n", "<br>")
     server_ok = None
     with get_db() as conn:
         ftype = "sent" if req.send else "drafts"

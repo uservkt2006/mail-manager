@@ -32,13 +32,15 @@ export default function ComposeModal({ replyTo, mode = 'reply', user, onClose, o
   const fileRef = useRef(null)
   const loadedRef = useRef(false)
   const sigLoadedRef = useRef(false)
+  const sigAddedRef = useRef(false)   // track OUR sig insertion (quoted text may contain old data-sig divs!)
   const bodyRef = useRef(null)
   const sigRef = useRef('')
 
+  const sigId = useRef('sig' + Math.random().toString(36).slice(2, 8))
   const sigBlock = () => {
     const html = sigRef.current
     if (!html) return ''
-    return `<div class="mm-sig" data-sig="1"><br>--&nbsp;<br>${html}</div>`
+    return `<div class="mm-sig" data-sig="${sigId.current}"><br>--&nbsp;<br>${html}</div>`
   }
 
   const loadSig = async () => {
@@ -55,6 +57,7 @@ export default function ComposeModal({ replyTo, mode = 'reply', user, onClose, o
     if (replyTo) return
     loadSig().then(sig => {
       if (sig) {
+        sigAddedRef.current = true
         setBodyHtml(sigBlock())
         setTimeout(() => {
           const ed = bodyRef.current?.querySelector('[contenteditable]')
@@ -86,27 +89,23 @@ export default function ComposeModal({ replyTo, mode = 'reply', user, onClose, o
           quoted = (fp.body ? fp.body + '<br><br>' : '') + quoted
         } catch { /* keep quote only */ }
       }
-      setBodyHtml(quoted)
+      // Outlook placement: [chữ ký][quote], cursor at top. Use our own sigId marker
+      // — quoted chains may contain data-sig from earlier app-sent mails (must not
+      // suppress the fresh signature insert).
       loadSig().then(sig => {
-        if (sig) setTimeout(() => {
+        sigAddedRef.current = !!sig
+        setBodyHtml(sig ? sigBlock() + quoted : quoted)
+        setTimeout(() => {
           const ed = bodyRef.current?.querySelector('[contenteditable]')
-          if (ed && !ed.innerHTML.includes('data-sig')) {
-            ed.innerHTML = ed.innerHTML + sigBlock()
-            setBodyHtml(ed.innerHTML)
+          if (ed) {
+            ed.focus()
+            const range = document.createRange()
+            range.selectNodeContents(ed)
+            range.collapse(true)
+            const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(range)
           }
-        }, 150)
+        }, 120)
       })
-      setTimeout(() => {
-        const ed = bodyRef.current?.querySelector('[contenteditable]')
-        if (ed) {
-          ed.focus()
-          // caret to first position (before quoted text), Outlook-style
-          const range = document.createRange()
-          range.selectNodeContents(ed)
-          range.collapse(true)
-          const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(range)
-        }
-      }, 100)
     }).catch(e => setErr('Không tải được bản nháp: ' + e.message))
   }, [replyTo, mode])
 
@@ -139,7 +138,7 @@ export default function ComposeModal({ replyTo, mode = 'reply', user, onClose, o
     setBusy(true); setErr('')
     try {
       const res = await api.compose(to.join(', '), subject.trim(), bodyHtml, doSend,
-        { ...meta, cc: cc.join(', '), bcc: bcc.join(', '),
+        { ...meta, cc: cc.join(', '), bcc: bcc.join(', '), sig_added: !!sigAddedRef.current,
           attachments: doSend ? attachments.map(({ name, content_type, content_base64 }) => ({ name, content_type, content_base64 })) : [] })
       if (doSend && res.server === false) {
         setErr('Đã lưu nhưng KHÔNG gửi được qua Exchange — kiểm tra mạng rồi gửi lại.')
