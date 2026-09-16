@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from 'react'
 import { Search, Bell } from 'lucide-react'
 import { api } from '../api'
 
-export default function TopBar({ onOpenResults }) {
+export default function TopBar() {
   const [q, setQ] = useState('')
   const [results, setResults] = useState(null)
   const [open, setOpen] = useState(false)
@@ -28,6 +28,14 @@ export default function TopBar({ onOpenResults }) {
     setOpen(true)
   }
 
+  // click a mail in the dropdown → jump to it like Outlook: switch to Mail module,
+  // open that mail in the reading pane, and focus the matching folder list
+  const openMail = (m) => {
+    window.dispatchEvent(new CustomEvent('mm-module', { detail: 'mail' }))
+    window.dispatchEvent(new CustomEvent('mm-open-mail', { detail: m }))
+    setOpen(false)
+  }
+
   const total = results ? results.messages.length + results.contacts.length + results.tasks.length + results.events.length : 0
 
   return (
@@ -45,32 +53,65 @@ export default function TopBar({ onOpenResults }) {
         {open && results && (
           <div className="absolute top-full mt-1 left-0 right-0 bg-dark-surface border border-dark-border rounded-lg shadow-2xl z-50 max-h-[70vh] overflow-y-auto py-2">
             <div className="px-3 py-1 text-[11px] text-ink-dim border-b border-dark-border mb-1">
-              {total} kết quả cho “{q}” · chỉ dữ liệu của bạn
+              {total} kết quả cho “{q}” · nhấn để mở
             </div>
             {total === 0 && <div className="px-3 py-4 text-sm text-ink-dim text-center">Không có kết quả. Thử từ khóa khác.</div>}
-            {results.messages.length > 0 && <Section title="Mail" items={results.messages.map(m => ({ main: m.subject, sub: `${m.from} · ${m.folder_name || ''}` }))} />}
-            {results.contacts.length > 0 && <Section title="People" items={results.contacts.map(c => ({ main: c.name, sub: c.email }))} />}
-            {results.tasks.length > 0 && <Section title="To Do" items={results.tasks.map(t => ({ main: t.title, sub: t.status }))} />}
-            {results.events.length > 0 && <Section title="Lịch" items={results.events.map(e => ({ main: e.subject, sub: e.start_at?.slice(0, 16).replace('T', ' ') }))} />}
+            {results.messages.length > 0 && (
+              <div className="mb-1">
+                <div className="px-3 py-1 text-[10px] uppercase tracking-wider text-ink-mute font-semibold">Mail</div>
+                {results.messages.slice(0, 5).map((m, i) => (
+                  <div key={m.id} onClick={() => openMail(m)}
+                    className="px-3 py-1.5 hover:bg-pa10 cursor-pointer group">
+                    <div className="text-sm text-ink truncate">{m.subject || '(Không có chủ đề)'}</div>
+                    <div className="text-xs text-ink-dim truncate">{(m.from || '').split('<')[0].trim() || m.from} · {m.folder_name || ''}</div>
+                  </div>
+                ))}
+                {results.messages.length > 5 && (
+                  <div className="px-3 py-1 text-[11px] text-primary hover:underline cursor-pointer"
+                    onClick={() => { window.dispatchEvent(new CustomEvent('mm-search-full', { detail: q.trim() })); setOpen(false) }}>
+                    Xem tất cả {results.messages.length} kết quả →
+                  </div>
+                )}
+              </div>
+            )}
+            {results.contacts.length > 0 && (
+              <div className="mb-1">
+                <div className="px-3 py-1 text-[10px] uppercase tracking-wider text-ink-mute font-semibold">People</div>
+                {results.contacts.slice(0, 5).map(c => (
+                  <div key={c.id} className="px-3 py-1.5 hover:bg-dark-hover cursor-default">
+                    <div className="text-sm text-ink truncate">{c.name}</div>
+                    <div className="text-xs text-ink-dim truncate">{c.email}</div>
+                  </div>
+                ))}
+              </div>
+            )}
+            {results.tasks.length > 0 && (
+              <div className="mb-1">
+                <div className="px-3 py-1 text-[10px] uppercase tracking-wider text-ink-mute font-semibold">To Do</div>
+                {results.tasks.slice(0, 5).map(t => (
+                  <div key={t.id} className="px-3 py-1.5 hover:bg-dark-hover cursor-default">
+                    <div className="text-sm text-ink truncate">{t.title}</div>
+                    <div className="text-xs text-ink-dim truncate">{t.status}</div>
+                  </div>
+                ))}
+              </div>
+            )}
+            {results.events.length > 0 && (
+              <div className="mb-1">
+                <div className="px-3 py-1 text-[10px] uppercase tracking-wider text-ink-mute font-semibold">Lịch</div>
+                {results.events.slice(0, 5).map(e => (
+                  <div key={e.id} className="px-3 py-1.5 hover:bg-dark-hover cursor-default">
+                    <div className="text-sm text-ink truncate">{e.subject}</div>
+                    <div className="text-xs text-ink-dim truncate">{e.start_at?.slice(0, 16).replace('T', ' ')}</div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
       </div>
       <div className="flex-1" />
       <button className="p-2 rounded hover:bg-dark-hover text-ink-dim" title="Thông báo (sắp có)"><Bell size={15} /></button>
-    </div>
-  )
-}
-
-function Section({ title, items }) {
-  return (
-    <div className="mb-1">
-      <div className="px-3 py-1 text-[10px] uppercase tracking-wider text-ink-mute font-semibold">{title}</div>
-      {items.slice(0, 5).map((it, i) => (
-        <div key={i} className="px-3 py-1.5 hover:bg-dark-hover cursor-default">
-          <div className="text-sm text-ink truncate">{it.main}</div>
-          <div className="text-xs text-ink-dim truncate">{it.sub}</div>
-        </div>
-      ))}
     </div>
   )
 }

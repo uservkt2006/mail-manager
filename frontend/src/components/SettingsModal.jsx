@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import { X, Plug, LogOut, ShieldCheck, Loader2, UserPlus, Trash2, SlidersHorizontal,
-  RefreshCw, PenLine, Keyboard, Info, Sun, Moon, MonitorSmartphone, LayoutList, Mail } from 'lucide-react'
+  RefreshCw, PenLine, Keyboard, Info, Sun, Moon, MonitorSmartphone, LayoutList, Mail, Archive, FolderOpen, Download, FileText, Reply, HardDrive, AlertCircle, Loader2 as L2 } from 'lucide-react'
 import { api, setToken } from '../api'
 import { getTheme, setTheme, getDensity, setDensity, getReadingPane, setReadingPane,
   getComposeFont, setComposeFont, getComposeSize, setComposeSize } from '../theme'
@@ -10,6 +10,9 @@ const SECTIONS = [
   { id: 'general', label: 'Chung', icon: SlidersHorizontal },
   { id: 'accounts', label: 'Tài khoản', icon: Plug },
   { id: 'sync', label: 'Đồng bộ', icon: RefreshCw },
+  { id: 'archive', label: 'Lưu trữ cục bộ', icon: Archive },
+  { id: 'autoreply', label: 'Trả lời tự động', icon: Reply },
+  { id: 'storage', label: 'Dung lượng', icon: HardDrive },
   { id: 'signature', label: 'Chữ ký', icon: PenLine },
   { id: 'shortcuts', label: 'Phím tắt', icon: Keyboard },
   { id: 'audit', label: 'Nhật ký hoạt động', icon: ShieldCheck },
@@ -23,6 +26,150 @@ const SHORTCUTS = [
   ['Chuột phải', 'Menu nhanh trên thư'], ['Esc', 'Đóng menu/modal'], ['?', 'Bảng trợ giúp phím'],
 ]
 const isElectron = typeof window !== 'undefined' && !!window.electron
+
+function AutoReplySection({ onMsg }) {
+  const [oof, setOof] = useState(null)
+  const [busy, setBusy] = useState(false)
+  const load = useCallback(() => {
+    api.autoreplyGet().then(setOof).catch(e => setOof({ error: e.message }))
+  }, [])
+  useEffect(() => { load() }, [load])
+  if (!oof) return <div className="flex items-center gap-2 text-ink-mute text-sm"><L2 size={14} className="animate-spin" /> Đang đọc trạng thái từ Exchange…</div>
+  if (oof.error) return <div className="text-sm text-red-400 flex items-center gap-2"><AlertCircle size={14} /> {oof.error}</div>
+  const dirty = JSON.stringify({
+    enabled: !!oof.enabled, external: !!oof.external, message: oof.message || '',
+  }) !== JSON.stringify({ enabled: false, external: true, message: '' })
+  const save = async () => {
+    setBusy(true)
+    try {
+      await api.autoreplySet({ enabled: !!oof.enabled, external: !!oof.external, message: oof.message || '' })
+      onMsg?.({ ok: true, text: oof.enabled ? 'Đã bật trả lời tự động' : 'Đã tắt trả lời tự động' })
+      load()
+    } catch (e) { onMsg?.({ ok: false, text: e.message }) }
+    finally { setBusy(false) }
+  }
+  return (
+    <div className="space-y-4">
+      <h3 className="text-base font-semibold text-ink-strong">Trả lời tự động</h3>
+      <p className="text-xs text-ink-mute leading-relaxed">
+        Bật để Exchange tự gửi câu trả lời cho người gửi mail cho bạn (giống "Automatic Replies" trong Outlook).
+        Hoạt động ngay cả khi app tắt — cấu hình nằm trên server.
+      </p>
+      <div className={`rounded-lg border p-4 ${oof.enabled ? 'border-pa40 bg-pa10' : 'border-dark-border bg-dark-bg'}`}>
+        <label className="flex items-start gap-3 cursor-pointer">
+          <input type="checkbox" className="mt-1" checked={!!oof.enabled}
+            onChange={e => setOof({ ...oof, enabled: e.target.checked })} />
+          <div>
+            <div className="text-sm font-medium text-ink-strong">Bật trả lời tự động</div>
+            <div className="text-[11px] text-ink-mute">Mọi người gửi thư cho bạn sẽ nhận được phản hồi.</div>
+          </div>
+        </label>
+        {oof.enabled && (
+          <div className="mt-4 space-y-3">
+            <label className="flex items-center gap-2 text-xs text-ink-dim cursor-pointer">
+              <input type="checkbox" checked={!!oof.external}
+                onChange={e => setOof({ ...oof, external: e.target.checked })} />
+              Gửi cho người ngoài tổ chức
+            </label>
+            <div>
+              <div className="text-xs text-ink-dim mb-1">Nội dung trả lời</div>
+              <textarea value={oof.message || ''} onChange={e => setOof({ ...oof, message: e.target.value })}
+                rows={6} className={inp + ' font-mono text-xs'}
+                placeholder={'Cảm ơn bạn đã liên hệ.\nHiện tôi không có mặt, sẽ trả lời sớm khi có thể.\n\nTrân trọng,\nVõ Khắc Tâm'} />
+            </div>
+            {oof.scheduled && (
+              <p className="text-[11px] text-ink-mute">Đang trong khoảng giờ đã lên lịch trên Exchange: {oof.start_at} → {oof.end_at}</p>
+            )}
+          </div>
+        )}
+      </div>
+      {dirty && (
+        <button onClick={save} disabled={busy} className="btn-primary text-sm py-2 px-4 flex items-center gap-2 disabled:opacity-50">
+          {busy ? <L2 size={14} className="animate-spin" /> : <Reply size={14} />} Lưu thay đổi
+        </button>
+      )}
+    </div>
+  )
+}
+
+function StorageSection() {
+  const [usage, setUsage] = useState(null)
+  const [err, setErr] = useState(null)
+  const load = useCallback(() => {
+    setErr(null); setUsage(null)
+    api.mailboxUsage().then(setUsage).catch(e => setErr(e.message))
+  }, [])
+  useEffect(() => { load() }, [load])
+  if (err) return <div className="text-sm text-red-400 flex items-center gap-2"><AlertCircle size={14} /> {err}</div>
+  if (!usage) return <div className="flex items-center gap-2 text-ink-mute text-sm"><L2 size={14} className="animate-spin" /> Đang lấy dung lượng từ Exchange…</div>
+  const pct = Math.min(100, Math.round(usage.total_bytes / (50 * 1024**3) * 100))
+  return (
+    <div className="space-y-5">
+      <h3 className="text-base font-semibold text-ink-strong">Dung lượng hộp thư</h3>
+      <div className="bg-dark-bg border border-dark-border rounded-lg p-5">
+        <div className="flex items-end justify-between mb-2">
+          <span className="text-2xl font-semibold text-ink-strong">{usage.total_human}</span>
+          <span className="text-xs text-ink-mute">đã dùng</span>
+        </div>
+        <div className="h-2 rounded-full bg-dark-hover overflow-hidden">
+          <div className="h-full bg-primary" style={{ width: `${Math.max(2, pct)}%` }} />
+        </div>
+        <div className="flex justify-between mt-1.5 text-[11px] text-ink-mute">
+          <span>{pct}% của 50 GB</span>
+          <button onClick={load} className="hover:text-primary">Tải lại</button>
+        </div>
+      </div>
+      <div>
+        <h4 className="text-sm font-semibold text-ink-strong mb-2">Top thư mục theo dung lượng</h4>
+        <div className="rounded-lg border border-dark-border overflow-hidden">
+          {usage.folders.map((f, i) => (
+            <div key={i} className="flex items-center justify-between px-4 py-2.5 text-sm" style={{ backgroundColor: i % 2 ? 'var(--bg)' : 'transparent' }}>
+              <span className="text-ink-dim truncate flex-1">{f.name}</span>
+              <span className="text-ink-mute ml-4">{f.human}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+      <p className="text-[11px] text-ink-mute">
+        Dữ liệu lấy trực tiếp từ Exchange (cập nhật 10 phút/lần). Dọn dung lượng bằng "Lưu trữ cục bộ" — mỗi thư xuất ra .eml và bị xoá khỏi server.
+      </p>
+    </div>
+  )
+}
+
+function ArchiveBrowser({ onOpenMail }) {
+  const [cur, setCur] = useState('')
+  const [items, setItems] = useState([])
+  const [err, setErr] = useState(null)
+  const refresh = (p) => {
+    setErr(null)
+    api.archiveBrowse(p).then(d => { setCur(d.current || ''); setItems(d.items || []) })
+      .catch(e => setErr(e.message))
+  }
+  useEffect(() => { refresh('') }, [])
+  if (err) return <div className="text-xs text-red-400">{err}</div>
+  return (
+    <div className="bg-dark-bg border border-dark-border rounded-lg p-2 max-h-48 overflow-y-auto">
+      <div className="flex items-center gap-1 mb-1">
+        <button onClick={() => refresh('')} className="text-[11px] text-ink-mute hover:text-primary px-1 py-0.5">Root</button>
+        {cur && <><span className="text-ink-mute text-[11px]">/</span><span className="text-[11px] text-ink">{cur}</span></>}
+      </div>
+      {items.length === 0 && !err && <div className="text-xs text-ink-mute p-2">Chưa có thư nào được lưu trữ — bấm “Lưu trữ về máy” ở menu chuột phải của một thư.</div>}
+      {items.map(it => it.type === 'dir' ? (
+        <div key={it.name} className="flex items-center gap-2 px-2 py-1 text-sm text-ink cursor-pointer hover:bg-dark-hover"
+          onClick={() => refresh(it.name)}>
+          <Archive size={13} className="text-ink-mute" /> {it.name}
+        </div>
+      ) : (
+        <div key={it.name} className="flex items-center gap-2 px-2 py-1 text-sm text-ink-dim cursor-pointer hover:bg-dark-hover"
+          onClick={() => api.archiveEml((cur ? cur + '/' : '') + it.name).then(d => onOpenMail(d.mail))}>
+          <FileText size={13} className="text-ink-mute" /> {it.name} <span className="text-[11px] text-ink-mute ml-auto">{(it.size/1024).toFixed(1)} KB</span>
+        </div>
+      ))}
+      {err && <div className="text-xs text-red-400 p-2">{err}</div>}
+    </div>
+  )
+}
 
 export default function SettingsModal({ user, section = 'general', onClose, onLogout }) {
   const [sec, setSec] = useState(section)
@@ -164,6 +311,49 @@ export default function SettingsModal({ user, section = 'general', onClose, onLo
                   Hành động đọc/đánh dấu/nhãn chỉ áp dụng trên máy bạn — chưa đẩy ngược lên server (v3.3).
                 </p>
               </div>
+            )}
+
+            {sec === 'archive' && settings && (
+              <div className="space-y-5">
+                <h3 className="text-base font-semibold text-ink-strong">Lưu trữ mail về máy</h3>
+                <p className="text-xs text-ink-mute leading-relaxed">
+                  Xuất mỗi thư ra file <code className="bg-dark-bg px-1 py-0.5 rounded">.eml</code> (định dạng chuẩn, mở lại bằng Thunderbird/Apple Mail), xoá bản sao trên Exchange để giải phóng
+                  quota hộp thư FPT. Thư đã lưu trữ vẫn nằm trong danh sách và tìm kiếm; khi muốn xem mail server bấm
+                  "Khôi phục" sẽ trở lại vị trí cũ (file .eml vẫn còn để backup).
+                </p>
+                <Row label="Thư mục lưu">
+                  <div className="flex gap-2">
+                    <input className={inp + ' flex-1'} value={settings.archive_path || ''} placeholder="/home/bạn/MailArchive"
+                      onBlur={e => saveS({ archive_path: e.target.value })}
+                      onChange={e => setSettings({ ...settings, archive_path: e.target.value })} />
+                    {isElectron && (
+                      <button onClick={async () => {
+                        const p = await window.electron.pickFolder()
+                        if (p) { saveS({ archive_path: p }); setMsg({ ok: true, text: `Đã chọn ${p}` }) }
+                      }} className="btn-secondary text-sm px-3 flex items-center gap-1.5 shrink-0">
+                        <FolderOpen size={14} /> Chọn…
+                      </button>
+                    )}
+                  </div>
+                </Row>
+                <p className="text-[11px] text-ink-mute">Lưu ý bảo mật: thư được lưu rõ (không mã hoá) — đừng chọn thư mục chia sẻ/đồng bộ đám mây công khai.</p>
+                <div className="border-t border-dark-border pt-4">
+                  <h4 className="text-sm font-semibold text-ink-strong mb-2">Cấu trúc thư mục</h4>
+                  <ArchiveBrowser onOpenMail={(m) => { window.dispatchEvent(new CustomEvent('mm-open-mail', { detail: m })); onClose() }} />
+                </div>
+                <div className="border-t border-dark-border pt-4 text-xs text-ink-mute space-y-1">
+                  <p>• Trên thư đã lưu trữ, menu chuột phải có thêm <b>Khôi phục về server</b>.</p>
+                  <p>• FTS index (tìm kiếm) vẫn truy vấn thư lưu trữ, nhưng chưa đọc đầy đủ nội dung .eml đã chuyển từ server (xem trực tiếp từ file đó).</p>
+                </div>
+              </div>
+            )}
+
+            {sec === 'autoreply' && (
+              <AutoReplySection onMsg={renderMsg} />
+            )}
+
+            {sec === 'storage' && (
+              <StorageSection />
             )}
 
             {sec === 'signature' && settings && (

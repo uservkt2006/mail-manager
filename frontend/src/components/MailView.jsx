@@ -87,13 +87,49 @@ export default function MailView({ user, catMeta: catMetaProp, onOpenSettings })
     const bump = () => { setDensity(getDensity()); setPane(getReadingPane()); loadEmails(); loadTree() }
     const newMail = () => setCompose({ mode: 'new' })
     const ruleForFolder = (e) => setRuleFolder(e.detail)
+    // Outlook search: click a mail in the global search dropdown inside TopBar;
+    // that mail may not be in the currently open folder. Fetch its full object,
+    // switch the list to its folder, highlight it and open it in the reading pane.
+    const handleOpenMail = async (e) => {
+      const m = e.detail
+      try {
+        const full = await api.email(m.id)
+        const target = full.message || full
+        // if the list isn't showing this mail's folder, jump the list there first
+        // (and update the tree's active state) so the highlight is visible
+        const curFid = activeFolder?.id
+        if (curFid != null && String(full.folder_id ?? target.folder_id) !== String(curFid)) {
+          const t = await api.folders()
+          let found = null
+          const walk = (nodes) => nodes.forEach(n => {
+            if (String(n.id) === String(full.folder_id ?? target.folder_id)) found = n
+            else if (n.children) walk(n.children)
+          })
+          walk(t.tree || [])
+          if (found) { setActiveFolder(found); setTree(t.tree) }
+        }
+        // render the mail immediately even while its folder's list loads
+        setSelected({ ...target, folder_id: target.folder_id ?? full.folder_id })
+        await loadEmails()
+      } catch (e2) {
+        console.warn('open from global search', e2)
+      }
+    }
+    const handleSearchFull = (e) => {
+      const q = String(e.detail || '')
+      setSearch(q)
+      window.dispatchEvent(new CustomEvent('mm-module', { detail: 'mail' }))
+    }
     window.addEventListener('mm-theme', bump)
     window.addEventListener('mm-synced', bump)
     window.addEventListener('mm-new-mail', newMail)
     window.addEventListener('mm-rule-for-folder', ruleForFolder)
+    window.addEventListener('mm-open-mail', handleOpenMail)
+    window.addEventListener('mm-search-full', handleSearchFull)
     return () => {
       window.removeEventListener('mm-theme', bump); window.removeEventListener('mm-synced', bump)
       window.removeEventListener('mm-new-mail', newMail); window.removeEventListener('mm-rule-for-folder', ruleForFolder)
+      window.removeEventListener('mm-open-mail', handleOpenMail); window.removeEventListener('mm-search-full', handleSearchFull)
     }
   }, [loadEmails, loadTree])
 
@@ -106,6 +142,19 @@ export default function MailView({ user, catMeta: catMetaProp, onOpenSettings })
     if (fromFolder) showToast('Đã chuyển vào Lưu trữ', async () => { await api.move(id, fromFolder); loadEmails(); loadTree() })
   }
 
+  const actArchiveLocal = async (e) => {
+    if (!confirm(`Lưu trữ "${e.subject || '(không có chủ đề)'}" về máy và xoá khỏi Exchange? File .eml lưu trong thư mục lưu trữ; thư vẫn xuất hiện trong danh sách để truy cập.`)) return
+    try {
+      const r = await api.archiveLocal(e.id)
+      showToast(`Đã lưu trữ về máy: ${r.path}`)
+    } catch (err) { showToast(`Lưu trữ thất bại: ${err.message}`) }
+    loadEmails(); loadTree()
+  }
+  const actUnarchive = async (e) => {
+    await api.unarchiveLocal(e.id)
+    showToast('Đã khôi phục về server — thư sẽ trở lại vị trí cũ')
+    loadEmails(); loadTree()
+  }
   const actDelete = async (id) => {
     await api.del(id)
     if (selected?.id === id) setSelected(null)
@@ -199,7 +248,9 @@ export default function MailView({ user, catMeta: catMetaProp, onOpenSettings })
     { label: 'Di chuyển tới', icon: FolderInput, submenu: flatFolders.filter(f => f.id !== email.folder_id).map(f => ({ label: f.name, onClick: () => actMove(email.id, f.id) })) },
     { label: 'Tạo quy tắc từ thư này…', icon: Zap, onClick: () => setRuleFor(email) },
     { sep: true },
-    { label: 'Lưu trữ', icon: Archive, onClick: () => actArchive(email.id) },
+    { label: email.archived_local ? 'Khôi phục về server' : 'Lưu trữ (E)', icon: Archive,
+      onClick: () => email.archived_local ? actUnarchive(email) : actArchive(email.id) },
+    { label: 'Lưu trữ về máy (.eml)', icon: FolderInput, onClick: () => actArchiveLocal(email) },
     { label: 'Xóa', icon: Trash2, danger: true, onClick: () => actDelete(email.id) },
     { sep: true },
     { label: 'Đánh dấu tất cả đã đọc', icon: CheckCheck, onClick: actReadAll },

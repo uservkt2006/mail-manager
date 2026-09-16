@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain } = require('electron')
+const { app, BrowserWindow, ipcMain, dialog, Notification } = require('electron')
 const path = require('path')
 const { spawn } = require('child_process')
 
@@ -76,3 +76,21 @@ ipcMain.on('window-maximize', () => {
   mainWindow.isMaximized() ? mainWindow.unmaximize() : mainWindow.maximize()
 })
 ipcMain.on('window-close', () => mainWindow.close())
+
+// Native folder picker (Outlook "Browse for folder")
+ipcMain.handle('pick-folder', async () => {
+  const r = await dialog.showOpenDialog(mainWindow, {
+    title: 'Chọn thư mục lưu trữ',
+    properties: ['openDirectory', 'createDirectory'],
+  })
+  return r.canceled ? null : r.filePaths[0]
+})
+
+// Desktop new-mail notification (Outlook toast). Click focuses the window.
+ipcMain.on('notify', (_e, { title, body }) => {
+  if (Notification.isSupported()) {
+    const n = new Notification({ title, body, silent: false })
+    n.on('click', () => { if (mainWindow) { mainWindow.show(); mainWindow.focus() } })
+    n.show()
+  }
+})

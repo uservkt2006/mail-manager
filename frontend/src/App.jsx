@@ -9,18 +9,36 @@ import MailView from './components/MailView'
 import CalendarView from './components/CalendarView'
 import PeopleView from './components/PeopleView'
 import TasksView from './components/TasksView'
+import RulesView from './components/RulesView'
+import RuleModal from './components/RuleModal'
 import SettingsModal from './components/SettingsModal'
 
 export default function App() {
   const [user, setUser] = useState(null)
   const [booting, setBooting] = useState(true)
   const [module, setModule] = useState('mail')
+
+  // global search (TopBar) can originate from any module; jump to Mail when
+  // a result is chosen, and honor explicit module switches from inside views
+  useEffect(() => {
+    const onModule = (e) => setModule(String(e.detail || 'mail'))
+    window.addEventListener('mm-module', onModule)
+    return () => window.removeEventListener('mm-module', onModule)
+  }, [])
   const [showSettings, setShowSettings] = useState(false)
   const [settingsSection, setSettingsSection] = useState('general')
   const [setupNeeded, setSetupNeeded] = useState(false)
   const [hasAccount, setHasAccount] = useState(false)
   const [online, setOnline] = useState(true)
   const [rt, setRt] = useState(null)   // last realtime event {type, subject, ts}
+  const [rulesFolders, setRulesFolders] = useState([])
+  const [ruleModal, setRuleModal] = useState(null)   // {mode:'new'|'edit', rule?}
+
+  // folder tree is needed by both MailView and the rules editor
+  const refreshFolders = useCallback(() => {
+    api.folders().then(d => setRulesFolders(d.tree || [])).catch(() => {})
+  }, [])
+  useEffect(() => { if (user) refreshFolders() }, [user, refreshFolders])
 
   useEffect(() => {
     if (!user) { return }
@@ -49,6 +67,15 @@ export default function App() {
           const ev = JSON.parse(e.data)
           ev.ts && (lastTs = ev.ts)
           setRt(ev)
+          // Outlook-style desktop toast on new mail (Electron native notification)
+          if (ev.type === 'new_mail' && ev.subject) {
+            const title = ev.from ? `📩 ${ev.from}` : '📩 Thư mới'
+            const body = ev.subject + (ev.folder ? ` — ${ev.folder}` : '')
+            if (window.electron?.notify) window.electron.notify(title, body)
+            else if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+              new Notification(title, { body })
+            }
+          }
         } catch { /* comment frames */ }
       }
       es.onerror = () => {          // tunnel/proxy may not carry SSE — fall back to polling
@@ -137,10 +164,23 @@ export default function App() {
           {module === 'calendar' && <CalendarView />}
           {module === 'people' && <PeopleView />}
           {module === 'tasks' && <TasksView />}
+          {module === 'rules' && (
+            <RulesView folders={rulesFolders} onNew={() => setRuleModal({ mode: 'new' })}
+              onEdit={(r) => setRuleModal({ mode: 'edit', rule: r })} />
+          )}
           <StatusBar online={online} itemInfo="" hasAccount={hasAccount} realtime={rt} onRefresh={() => window.dispatchEvent(new Event('mm-synced'))} />
         </div>
       </div>
       {showSettings && <SettingsModal user={user} section={settingsSection} onClose={() => setShowSettings(false)} onLogout={logout} />}
+      {ruleModal && (
+        <RuleModal
+          folders={rulesFolders}
+          initial={ruleModal.mode === 'edit' ? ruleModal.rule : ruleModal.rule}
+          rule={ruleModal.mode === 'edit' ? ruleModal.rule : null}
+          onClose={() => setRuleModal(null)}
+          onCreated={() => { setRuleModal(null); window.dispatchEvent(new Event('mm-synced')) }}
+        />
+      )}
     </div>
   )
 }

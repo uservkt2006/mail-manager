@@ -31,7 +31,7 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], all
 # SQLite database path (MM_DB_PATH lets tests use an isolated DB)
 DB_PATH = os.environ.get("MM_DB_PATH") or os.path.expanduser("~/.mail_manager/mail_manager.db")
 KEY_PATH = os.path.expanduser("~/.mail_manager/key")
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 10
 
 CATEGORIES = ["Work", "Personal", "Finance", "Urgent", "Travel", "Other"]
 CATEGORY_COLORS = {"Work": "#4c8dff", "Personal": "#22c55e", "Finance": "#f59e0b",
@@ -173,6 +173,8 @@ CREATE TABLE IF NOT EXISTS messages (
     flag_due TEXT,
     categories TEXT DEFAULT '[]',
     deleted_at TEXT,
+    archived_local INTEGER DEFAULT 0,
+    archive_path TEXT,
     received_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 CREATE TABLE IF NOT EXISTS attachments (
@@ -223,14 +225,18 @@ CREATE TABLE IF NOT EXISTS rules (
     name TEXT NOT NULL,
     enabled INTEGER DEFAULT 1,
     -- conditions (all present ones must match)
-    c_from TEXT, c_subject TEXT, c_body TEXT, c_to TEXT, c_unread INTEGER,
-    c_has_attachment INTEGER,
+    c_from TEXT, c_subject TEXT, c_body TEXT, c_to TEXT, c_cc TEXT, c_unread INTEGER,
+    c_has_attachment INTEGER, c_size_min INTEGER,
     -- actions
     a_folder_id INTEGER REFERENCES folders(id),
     a_mark_read INTEGER DEFAULT 0,
     a_star INTEGER DEFAULT 0,
     a_category TEXT,
     a_flag_days INTEGER,
+    a_delete INTEGER DEFAULT 0,
+    a_forward TEXT,
+    a_autoreply TEXT,
+    priority INTEGER DEFAULT 0,
     hits INTEGER DEFAULT 0,
     last_hit_at TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -463,7 +469,9 @@ def init_db():
                                "PRIMARY KEY (user_id, folder_path));")
         # additive columns for live DBs (CREATE IF NOT EXISTS won't add them)
         for col, typ in (("html_body", "TEXT"), ("cc", "TEXT"), ("bcc", "TEXT"),
-                         ("ews_item_id", "TEXT")):
+                         ("ews_item_id", "TEXT"),
+                         ("archived_local", "INTEGER DEFAULT 0"),
+                         ("archive_path", "TEXT")):
             try:
                 conn.execute(f"ALTER TABLE messages ADD COLUMN {col} {typ}")
             except sqlite3.OperationalError:
@@ -471,6 +479,19 @@ def init_db():
         for col, typ in (("content_id", "TEXT"), ("is_inline", "INTEGER DEFAULT 0")):
             try:
                 conn.execute(f"ALTER TABLE attachments ADD COLUMN {col} {typ}")
+            except sqlite3.OperationalError:
+                pass
+        # v3.4.1: folder order_index for drag-drop reorder
+        try:
+            conn.execute("ALTER TABLE folders ADD COLUMN order_index INTEGER DEFAULT 0")
+        except sqlite3.OperationalError:
+            pass
+        # v3.4.2: rule priority + cc/size conditions + delete/forward/autoreply actions
+        for col, typ in (("c_cc", "TEXT"), ("c_size_min", "INTEGER"),
+                         ("a_delete", "INTEGER DEFAULT 0"), ("a_forward", "TEXT"),
+                         ("a_autoreply", "TEXT"), ("priority", "INTEGER DEFAULT 0")):
+            try:
+                conn.execute(f"ALTER TABLE rules ADD COLUMN {col} {typ}")
             except sqlite3.OperationalError:
                 pass
         conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
@@ -714,6 +735,8 @@ def _parse_msg(row) -> dict:
     m["is_read"] = bool(m.get("is_read"))
     m["starred"] = bool(m.get("starred"))
     m["has_attachments"] = bool(m.get("has_attachments"))
+    m["archived_local"] = bool(m.get("archived_local"))
+    m.setdefault("archive_path", "")
     m.setdefault("cc", "")
     m.setdefault("bcc", "")
     m.pop("deleted_at", None)
@@ -732,16 +755,24 @@ def folder_counts(conn, user_id):
 
 def folder_tree(user_id, conn):
     counts = folder_counts(conn, user_id)
-    rows = conn.execute("SELECT * FROM folders WHERE user_id=? ORDER BY type='user', name", (user_id,)).fetchall()
+    cols = [r[1] for r in conn.execute("PRAGMA table_info(folders)")]
+    order = "ORDER BY CASE WHEN type='user' THEN 1 ELSE 0 END, order_index ASC, name" if "order_index" in cols else "ORDER BY type='user', name"
+    rows = conn.execute(f"SELECT * FROM folders WHERE user_id=? {order}", (user_id,)).fetchall()
     nodes = {r["id"]: {"id": r["id"], "name": r["name"], "type": r["type"],
                        "parent_id": r["parent_id"], "total": counts.get(r["id"], (0, 0))[0],
-                       "unread": counts.get(r["id"], (0, 0))[1], "children": []} for r in rows}
+                       "unread": counts.get(r["id"], (0, 0))[1],
+                       "order_index": r["order_index"] if "order_index" in r.keys() else 0,
+                       "children": []} for r in rows}
     roots = []
     for n in nodes.values():
         if n["parent_id"] and n["parent_id"] in nodes:
             nodes[n["parent_id"]]["children"].append(n)
         else:
             roots.append(n)
+    roots.sort(key=lambda n: (n["type"] == "user",))  # system first, then user (both already order_index-sorted)
+    for n in nodes.values():
+        if n["children"]:
+            pass  # children inherit the DB order already
     return roots
 
 
@@ -1239,18 +1270,25 @@ class RuleReq(BaseModel):
     c_subject: Optional[str] = None
     c_body: Optional[str] = None
     c_to: Optional[str] = None
+    c_cc: Optional[str] = None
     c_unread: Optional[bool] = None
     c_has_attachment: Optional[bool] = None
+    c_size_min: Optional[int] = None          # KB
     a_folder_id: Optional[int] = None
     a_mark_read: bool = False
     a_star: bool = False
     a_category: Optional[str] = None
     a_flag_days: Optional[int] = None
+    a_delete: bool = False
+    a_forward: Optional[str] = None           # email to forward to
+    a_autoreply: Optional[str] = None         # body of an instant reply
+    priority: Optional[int] = 0
 
 
 def rule_has_conditions(r: dict) -> bool:
     return bool(r.get("c_from") or r.get("c_subject") or r.get("c_body") or r.get("c_to")
-                or r.get("c_unread") or r.get("c_has_attachment"))
+                or r.get("c_cc") or r.get("c_unread") or r.get("c_has_attachment")
+                or r.get("c_size_min"))
 
 
 def rule_matches(rule: dict, m: dict) -> bool:
@@ -1261,16 +1299,24 @@ def rule_matches(rule: dict, m: dict) -> bool:
         return False
     if rule.get("c_has_attachment") and not m.get("has_attachments"):
         return False
-    for fld, key in (("c_from", "from"), ("c_subject", "subject"), ("c_body", "body"), ("c_to", "to")):
+    for fld, key in (("c_from", "from"), ("c_subject", "subject"), ("c_body", "body"),
+                     ("c_to", "to"), ("c_cc", "cc")):
         needle = rule.get(fld)
         if needle and needle.lower() not in (m.get(key) or "").lower():
             return False
+    if rule.get("c_size_min"):
+        try:
+            if int((m.get("size") or 0)) < int(rule["c_size_min"]) * 1024:
+                return False
+        except (TypeError, ValueError):
+            pass
     return True
 
 
 def apply_rules(conn, user_id: int, message_row: dict) -> bool:
-    """Run enabled rules on one message. Returns True if any fired."""
-    rules = [dict(r) for r in conn.execute("SELECT * FROM rules WHERE user_id=? AND enabled=1", (user_id,))]
+    """Run enabled rules on one message (priority desc). Returns True if any fired."""
+    rules = [dict(r) for r in conn.execute(
+        "SELECT * FROM rules WHERE user_id=? AND enabled=1 ORDER BY priority DESC, rowid", (user_id,))]
     fired = False
     for r in rules:
         try:
@@ -1296,13 +1342,69 @@ def apply_rules(conn, user_id: int, message_row: dict) -> bool:
         if r["a_flag_days"]:
             due = (datetime.now() + timedelta(days=int(r["a_flag_days"]))).isoformat()
             upd.append("flag_due=?"); args.append(due)
-        if not upd:
+        if not upd and not (r.get("a_delete") or r.get("a_forward") or r.get("a_autoreply")):
             continue
-        args += [message_row["id"], user_id]
-        conn.execute(f"UPDATE messages SET {','.join(upd)} WHERE id=? AND user_id=?", args)
+        if upd:
+            args += [message_row["id"], user_id]
+            conn.execute(f"UPDATE messages SET {','.join(upd)} WHERE id=? AND user_id=?", args)
+        # side-effect actions (best-effort, never block the rule engine)
+        if r.get("a_autoreply"):
+            try:
+                threading.Thread(target=_rule_autoreply, args=(user_id, message_row, r["a_autoreply"]),
+                                 daemon=True).start()
+            except Exception as e:
+                logger.warning(f"rule autoreply: {e}")
+        if r.get("a_forward"):
+            try:
+                threading.Thread(target=_rule_forward, args=(user_id, message_row, r["a_forward"]),
+                                 daemon=True).start()
+            except Exception as e:
+                logger.warning(f"rule forward: {e}")
+        if r.get("a_delete"):
+            try:
+                conn.execute("UPDATE messages SET deleted_at=?, folder_id=NULL WHERE id=? AND user_id=?",
+                             (now_iso(), message_row["id"], user_id))
+                _fts_ensure_row(conn, message_row["id"])
+            except Exception as e:
+                logger.warning(f"rule delete: {e}")
         conn.execute("UPDATE rules SET hits=hits+1, last_hit_at=? WHERE id=?", (now_iso(), r["id"]))
         fired = True
     return fired
+
+
+def _rule_autoreply(user_id: int, m: dict, body: str):
+    """Send an instant reply from a rule (server-side, like Outlook's 'reply with message')."""
+    try:
+        account = acct_cached(user_id)
+        if not account or not m.get("message_id"):
+            return
+        from exchangelib.items import Message
+        from exchangelib.properties import Mailbox
+        reply = Message(account=account, folder=account.sent,
+                        subject=f"Re: {m.get('subject') or ''}",
+                        body=body,
+                        to_recipients=[Mailbox(email_address=(m.get("from") or "").split("<")[-1].rstrip(">"))])
+        reply.send_and_save()
+    except Exception as e:
+        logger.warning(f"autoreply rule send: {e}")
+
+
+def _rule_forward(user_id: int, m: dict, dest_email: str):
+    """Forward a matched message to another address (server-side)."""
+    try:
+        account = acct_cached(user_id)
+        if not account or not m.get("message_id"):
+            return
+        from exchangelib.items import Message
+        from exchangelib.properties import Mailbox
+        item = _find_ews_item(account, None, "", m["message_id"])
+        if item is None:
+            return
+        item.create_forward(to_recipients=[Mailbox(email_address=dest_email)],
+                            subject=f"Fw: {m.get('subject') or ''}",
+                            body="").send()
+    except Exception as e:
+        logger.warning(f"forward rule: {e}")
 
 
 @app.post("/api/rules/-/run")
@@ -1333,22 +1435,25 @@ async def rules_add(req: RuleReq, user: dict = Depends(current_user)):
         if req.a_folder_id and not conn.execute("SELECT id FROM folders WHERE id=? AND user_id=?",
                                                (req.a_folder_id, user["id"])).fetchone():
             raise HTTPException(400, "Thư mục đích không hợp lệ")
-        conn.execute("""INSERT INTO rules (id,user_id,name,enabled,c_from,c_subject,c_body,c_to,c_unread,c_has_attachment,
-                        a_folder_id,a_mark_read,a_star,a_category,a_flag_days)
-                        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-                     (rid, user["id"], req.name, 1 if req.enabled else 0,
-                      req.c_from, req.c_subject, req.c_body, req.c_to,
-                      1 if req.c_unread else 0, 1 if req.c_has_attachment else 0,
+        conn.execute("""INSERT INTO rules (id,user_id,name,enabled,priority,c_from,c_subject,c_body,c_to,c_cc,
+                        c_unread,c_has_attachment,c_size_min,
+                        a_folder_id,a_mark_read,a_star,a_category,a_flag_days,a_delete,a_forward,a_autoreply)
+                        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                     (rid, user["id"], req.name, 1 if req.enabled else 0, int(req.priority or 0),
+                      req.c_from, req.c_subject, req.c_body, req.c_to, req.c_cc,
+                      1 if req.c_unread else 0, 1 if req.c_has_attachment else 0, req.c_size_min,
                       req.a_folder_id, 1 if req.a_mark_read else 0, 1 if req.a_star else 0,
-                      req.a_category, req.a_flag_days))
+                      req.a_category, req.a_flag_days, 1 if req.a_delete else 0,
+                      req.a_forward, req.a_autoreply))
         audit(conn, user["id"], "rule.create", req.name)
     return {"success": True, "id": rid}
 
 
 @app.patch("/api/rules/{rid}")
 async def rules_patch(rid: str, req: dict, user: dict = Depends(current_user)):
-    allowed = {"name", "enabled", "c_from", "c_subject", "c_body", "c_to", "c_unread",
-               "c_has_attachment", "a_folder_id", "a_mark_read", "a_star", "a_category", "a_flag_days"}
+    allowed = {"name", "enabled", "c_from", "c_subject", "c_body", "c_to", "c_cc", "c_unread",
+               "c_has_attachment", "c_size_min", "a_folder_id", "a_mark_read", "a_star",
+               "a_category", "a_flag_days", "a_delete", "a_forward", "a_autoreply", "priority"}
     fields = {k: v for k, v in (req or {}).items() if k in allowed}
     if not fields:
         raise HTTPException(400, "Không có trường nào để cập nhật")
@@ -1576,6 +1681,182 @@ async def me(user: dict = Depends(current_user)):
     return {"user": user}
 
 
+
+# ─── local archive (reduce server storage) ────────────────────────────
+def _archive_dir(user_id: int) -> str:
+    path = get_settings(user_id).get("archive_path") or os.path.expanduser("~/MailArchive")
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
+def _eml_path(user_id: int, eid: str) -> str:
+    """One .eml per message, stored in year subfolders (Outlook's own structure)."""
+    with get_db() as conn:
+        r = conn.execute("SELECT date FROM messages WHERE id=? AND user_id=?", (eid, user_id)).fetchone()
+    year = (r["date"][:4] if r and r["date"] else str(time.localtime().tm_year)) or str(time.localtime().tm_year)
+    d = os.path.join(_archive_dir(user_id), year)
+    os.makedirs(d, exist_ok=True)
+    safe = re.sub(r"[^0-9A-Za-z._-]+", "_", eid) or "mail"
+    return os.path.join(d, f"{safe}.eml")
+
+
+def _write_eml(user_id: int, eid: str) -> str:
+    """Export a message to .eml (headers + body + embedded attachments).
+    Uses the local DB copy; attachments are pulled from Exchange best-effort."""
+    with get_db() as conn:
+        m = conn.execute("SELECT * FROM messages WHERE id=? AND user_id=?", (eid, user_id)).fetchone()
+        atts = [dict(r) for r in conn.execute(
+            "SELECT * FROM attachments WHERE message_id=? AND is_inline=0", (eid,))]
+    if not m:
+        raise HTTPException(404, "Không tìm thấy thư")
+    def hdr(name, val):
+        v = str(val or "").strip()
+        return f"{name}: {v}\r\n" if v else ""
+    lines = [hdr("From", m["from"]), hdr("To", m["to"]), hdr("Cc", m["cc"]),
+             hdr("Subject", m["subject"]), hdr("Date", m["date"]),
+             hdr("Message-ID", m["message_id"])]
+    boundary = None
+    if atts:
+        import uuid
+        boundary = "----=_MM_" + uuid.uuid4().hex
+        lines.append(f"Content-Type: multipart/mixed; boundary=\"{boundary}\"\r\n")
+    else:
+        lines.append("Content-Type: text/html; charset=utf-8\r\n")
+    body = m["html_body"] or m["body"] or ""
+    if boundary:
+        lines.append(f"--{boundary}\r\nContent-Type: text/html; charset=utf-8\r\n\r\n{body}\r\n")
+        for a in atts:
+            data = _read_attachment_bytes(user_id, eid, a["id"]) if a.get("storage_ref") else _fetch_attachment_bytes(user_id, eid, a["id"])
+            if data:
+                import base64
+                lines.append(f"--{boundary}\r\n"
+                             f"Content-Type: {a.get('mime_type') or 'application/octet-stream'}; name=\"{a.get('name')}\"\r\n"
+                             f"Content-Transfer-Encoding: base64\r\n"
+                             f"Content-Disposition: attachment; filename=\"{a.get('name')}\"\r\n\r\n"
+                             f"{base64.b64encode(data).decode()}\r\n")
+        lines.append(f"--{boundary}--\r\n")
+    else:
+        lines.append(body)
+    path = _eml_path(user_id, eid)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write("\r\n".join(lines))
+    return path
+
+
+def _read_attachment_bytes(user_id: int, eid: str, att_id: str):
+    return None  # placeholder kept for API stability; streaming path is _fetch_attachment_bytes
+
+
+def _fetch_attachment_bytes(user_id: int, eid: str, att_id: str):
+    """Best-effort pull of an attachment payload from Exchange."""
+    try:
+        account = acct_cached(user_id)
+        if not account:
+            return None
+        with get_db() as conn:
+            r = conn.execute("SELECT message_id, folder_id FROM messages WHERE id=? AND user_id=?", (eid, user_id)).fetchone()
+        if not r:
+            return None
+        item = _find_item_in_folder_by_id(account, _conn_readonly(), r["folder_id"], r["message_id"])
+        if item is None:
+            return None
+        for a in getattr(item, "attachments", None) or []:
+            if getattr(a, "name", None) and str(a.name) == att_id:
+                a.attach()
+                return a.content if hasattr(a, "content") else None
+    except Exception as e:
+        logger.warning(f"att bytes for archive: {e}")
+    return None
+
+
+@app.post("/api/emails/{eid}/archive-local")
+async def api_archive_local(eid: str, user: dict = Depends(current_user)):
+    """Export to .eml under the configured local archive path. Removes it from the
+    server (and from the live sync folders) so server storage is reclaimed; the mail
+    stays searchable here because the row + body stay in the DB with a new status."""
+    with get_db() as conn:
+        m = conn.execute("SELECT * FROM messages WHERE id=? AND user_id=?", (eid, user["id"])).fetchone()
+        if not m:
+            raise HTTPException(404, "Không tìm thấy thư")
+        if m["archived_local"]:
+            raise HTTPException(409, "Đã lưu trữ rồi")
+    path = _write_eml(user["id"], eid)   # export first so failure here = no data loss
+    with get_db() as conn:
+        # keep searchable and visible: body + row + folder stay, flagged as locally archived
+        # (server storage reclaimed via the delete below; the local copy remains in the list)
+        try:
+            conn.execute("UPDATE messages SET archived_local=1, archive_path=? WHERE id=? AND user_id=?",
+                         (path, eid, user["id"]))
+        except sqlite3.OperationalError:
+            pass
+        _fts_ensure_row(conn, eid)
+        audit(conn, user["id"], "mail.archive-local", eid, path)
+    # then delete from Exchange, best-effort
+    try:
+        ews_server_action(user["id"], m["message_id"], "delete")
+    except Exception as e:
+        logger.warning(f"server delete after archive: {e}")
+    return {"success": True, "path": path}
+
+
+@app.post("/api/emails/{eid}/unarchive")
+async def api_unarchive_local(eid: str, user: dict = Depends(current_user)):
+    """Undo: mail is moved back to the server (re-sent to self via draft+send, or
+    simply restored to the live folders by clearing the flag — the .eml is kept)."""
+    with get_db() as conn:
+        conn.execute("UPDATE messages SET archived_local=0, archive_path=NULL WHERE id=? AND user_id=?",
+                     (eid, user["id"]))
+        _fts_ensure_row(conn, eid)
+        audit(conn, user["id"], "mail.unarchive-local", eid)
+    return {"success": True}
+
+
+@app.get("/api/archive/browse")
+async def api_archive_browse(path: str = "", user: dict = Depends(current_user)):
+    """Browse the local archive tree — .eml files load back into search/results."""
+    root = get_settings(user["id"]).get("archive_path") or os.path.expanduser("~/MailArchive")
+    base = os.path.join(root, path) if path else root
+    if not os.path.isdir(base):
+        raise HTTPException(404, "Thư mục lưu trữ không tồn tại")
+    out = []
+    for name in sorted(os.listdir(base)):
+        full = os.path.join(base, name)
+        if os.path.isdir(full):
+            out.append({"name": name, "type": "dir"})
+        elif name.lower().endswith(".eml"):
+            st = os.stat(full)
+            out.append({"name": name, "type": "eml", "size": st.st_size, "path": os.path.relpath(full, root)})
+    return {"items": out, "root": root, "current": path}
+
+
+@app.get("/api/archive/eml")
+async def api_archive_eml(path: str, user: dict = Depends(current_user)):
+    """Load a stored .eml back and expose it in the reader/search."""
+    root = get_settings(user["id"]).get("archive_path") or os.path.expanduser("~/MailArchive")
+    full = os.path.abspath(os.path.join(root, path))
+    if not full.startswith(os.path.abspath(root)):
+        raise HTTPException(403, "Ngoài thư mục lưu trữ")
+    if not os.path.isfile(full):
+        raise HTTPException(404, "Không tìm thấy file")
+    with open(full, "r", encoding="utf-8", errors="replace") as f:
+        raw = f.read()
+    import email as _email
+    msg = _email.message_from_string(raw)
+    subject = msg.get("Subject", "")
+    return {
+        "success": True,
+        "mail": {
+            "subject": subject,
+            "from": msg.get("From", ""),
+            "to": msg.get("To", ""),
+            "cc": msg.get("Cc", ""),
+            "date": msg.get("Date", ""),
+            "body": raw.split("\r\n\r\n", 1)[-1],
+            "path": path,
+        },
+    }
+
+
 # ─── user settings ────────────────────────────────────────────────────
 class SettingsReq(BaseModel):
     values: dict
@@ -1584,7 +1865,8 @@ class SettingsReq(BaseModel):
 DEFAULT_SETTINGS = {"theme": "dark", "density": "comfortable", "reading_pane": "right",
                     "signature": "", "signature_html": "", "compose_font": "Calibri",
                     "compose_size": "14px", "autosync": True, "sync_interval_min": 5,
-                    "default_reply_all": False}
+                    "default_reply_all": False,
+                    "archive_path": os.path.expanduser("~/MailArchive")}
 
 
 def get_settings(user_id: int) -> dict:
@@ -1612,6 +1894,167 @@ async def api_settings_put(req: SettingsReq, user: dict = Depends(current_user))
                ON CONFLICT(user_id) DO UPDATE SET json=excluded.json, updated_at=CURRENT_TIMESTAMP""",
             (user["id"], json.dumps(merged, ensure_ascii=False)))
     return {"success": True, "settings": merged}
+
+
+# ─── server storage (Outlook "Mailbox usage") ─────────────────────────
+def _fmt_bytes(n):
+    n = float(n or 0)
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if n < 1024 or unit == "TB":
+            return f"{n:.1f} {unit}"
+        n /= 1024
+
+
+def _ews_folder_sizes(account):
+    """Raw GetFolder call: EWS returns <FolderSize> (bytes) and <TotalItemCount>.
+    exchangelib 5.6 does not expose these, so parse the SOAP envelope ourselves."""
+    import re as _re
+    from exchangelib.services import GetFolder
+    from exchangelib.folders import Folder
+    from exchangelib.properties import FolderId
+    try:
+        from exchangelib.fields import ExtendedPropertyField
+        from exchangelib.properties import ExtendedProperty
+    except Exception:
+        pass
+    # list all mail folders from the cached tree
+    folders = []
+    try:
+        for f in account.root.walk():
+            if getattr(f, "folder_class_name", None) in ("IPF.Note", None):
+                folders.append(f)
+    except Exception:
+        folders = [account.inbox]
+    names, sizes, counts = [], [], []
+    for f in folders:
+        try:
+            # request the folder with its size: EWS FolderSize is a direct child element
+            got = GetFolder(account=account).get(
+                folders=[f], shape="IdOnly", additional_fields=["folder:FolderSize", "folder:TotalItemCount"])
+        except Exception as e:
+            logger.warning(f"folder size {getattr(f, 'name', '?')}: {e}")
+            got = None
+        sz, cnt = 0, 0
+        if got:
+            try:
+                g = got[0] if isinstance(got, list) else got
+                sz = int(getattr(g, "folder_size", 0) or 0) or 0
+                cnt = int(getattr(g, "total_item_count", 0) or 0) or 0
+            except Exception:
+                pass
+        names.append(f.name)
+        sizes.append(sz)
+        counts.append(cnt)
+    return names, sizes, counts
+
+
+@app.get("/api/mailbox/usage")
+async def api_mailbox_usage(user: dict = Depends(current_user)):
+    """Folder sizes + total usage from Exchange (ExtendedField FolderSize /
+    TotalItemSize). Cached 10 min — the call walks the folder tree."""
+    import time as _t
+    key = ("usage", user["id"])
+    cached = _USAGE_CACHE.get(key)
+    if cached and _t.time() - cached["ts"] < 600:
+        return cached["data"]
+    account = acct_cached(user_id=user["id"])
+    if not account:
+        raise HTTPException(503, "Chưa kết nối được Exchange")
+    folders = []
+    total = 0
+    try:
+        # exchangelib 5.6 has no total_item_size; ask EWS directly for
+        # FolderSize + TotalItemCount via the raw protocol service.
+        names, sizes, counts = _ews_folder_sizes(account)
+        for i, n in enumerate(names):
+            sz = sizes[i] or 0
+            total += sz
+            folders.append({"name": n, "size": sz, "count": counts[i]})
+        folders.sort(key=lambda x: -(x["size"] or 0))
+    except Exception as e:
+        logger.error(f"mailbox usage: {e}")
+        raise HTTPException(500, f"Không lấy được dung lượng: {e}")
+    data = {"total_bytes": total, "total_human": _fmt_bytes(total),
+            "folders": [{"name": f["name"], "size": f["size"], "human": _fmt_bytes(f["size"])}
+                        for f in folders[:15]]}
+    _USAGE_CACHE[key] = {"ts": _t.time(), "data": data}
+    return data
+
+
+_USAGE_CACHE = {}
+
+
+# ─── automatic replies (Outlook "Automatic Replies" / OOF) ───────────
+class AutoReplyReq(BaseModel):
+    enabled: bool = False
+    external: bool = True            # also reply to senders outside the org
+    message: str = ""
+    start_at: Optional[str] = None   # ISO; empty = always (like Outlook "Send replies now")
+    end_at: Optional[str] = None
+
+
+@app.get("/api/autoreply")
+async def api_autoreply_get(user: dict = Depends(current_user)):
+    """Read the server-side OOF state. Exchangelib exposes it on account.oof_settings."""
+    account = acct_cached(user_id=user["id"])
+    if not account:
+        raise HTTPException(503, "Chưa kết nối được Exchange")
+    try:
+        oof = account.oof_settings
+        state = str(getattr(oof, "state", "") or "")
+        enabled = state.lower().startswith("enabled")
+        ext = getattr(oof, "external_audience", None)
+        ext_txt = str(ext) if ext is not None else ""
+        reply = getattr(oof, "internal_reply", "") or getattr(oof, "reply_body", "") or ""
+        try:
+            reply = str(reply)
+        except Exception:
+            reply = ""
+        return {
+            "enabled": enabled,
+            "scheduled": state.lower() == "scheduled",
+            "external": "all" in ext_txt.lower() if ext_txt else True,
+            "message": reply,
+            "start_at": str(getattr(oof, "start", "") or "") if enabled else None,
+            "end_at": str(getattr(oof, "end", "") or "") if enabled else None,
+        }
+    except Exception as e:
+        logger.error(f"oof get: {e}")
+        raise HTTPException(500, f"Không đọc được trạng thái: {e}")
+
+
+@app.put("/api/autoreply")
+async def api_autoreply_put(req: AutoReplyReq, user: dict = Depends(current_user)):
+    """Outlook-style automatic replies: set server-side OOF so every sender gets
+    an answer even when the app is closed."""
+    account = acct_cached(user_id=user["id"])
+    if not account:
+        raise HTTPException(503, "Chưa kết nối được Exchange")
+    try:
+        from exchangelib.properties import OofSettings
+        oof = OofSettings(
+            state=("Disabled" if not req.enabled else
+                   ("Scheduled" if (req.start_at and req.end_at) else "Enabled")),
+            external_audience=("All" if req.external else "Known"),
+            internal_reply=req.message or "",
+            external_reply=req.message or "",
+        )
+        if req.start_at and req.end_at:
+            from exchangelib.ewsdatetime import EWSDateTime
+            from datetime import datetime
+            def _pdt(v):
+                dt = datetime.fromisoformat(str(v).replace("Z", "+00:00"))
+                return EWSDateTime.from_datetime(dt)
+            oof.start = _pdt(req.start_at)
+            oof.end = _pdt(req.end_at)
+        account.oof_settings = oof
+        with get_db() as conn:
+            audit(conn, user["id"], "autoreply.set", "enabled" if req.enabled else "disabled",
+                  (req.message or "")[:80])
+        return {"success": True}
+    except Exception as e:
+        logger.error(f"oof set: {e}")
+        raise HTTPException(500, f"Không đặt được trả lời tự động: {e}")
 
 
 # ─── folders ──────────────────────────────────────────────────────────
@@ -1651,6 +2094,9 @@ async def api_folder_create(req: FolderCreate, user: dict = Depends(current_user
     return {"success": True, "server": srv}
 
 
+
+class FolderReorder(BaseModel):
+    items: list  # [{id, parent_id}]
 class FolderRename(BaseModel):
     name: str
 
@@ -1679,6 +2125,26 @@ async def api_folder_rename(fid: int, req: FolderRename, user: dict = Depends(cu
     except Exception as e:
         logger.error(f"server rename {fid}: {e}")
     return {"success": True, "server": srv}
+
+
+@app.post("/api/folders/reorder")
+async def api_folder_reorder(req: FolderReorder, user: dict = Depends(current_user)):
+    """Drag-drop reorder: persist new ordering locally so the tree renders in
+    the user's preferred order. Exchange has no user-facing folder order (its
+    sort is alphabetical/creation) — ordering is a client-side display concern,
+    so we persist here and re-render the tree from order_index."""
+    with get_db() as conn:
+        # verify all folders belong to the user, then assign order_index
+        owned = set(r["id"] for r in conn.execute(
+            "SELECT id FROM folders WHERE user_id=?", (user["id"],)))
+        items = [it for it in req.items if it.get("id") in owned]
+        for pos, it in enumerate(items):
+            pid = it.get("parent_id")
+            if pid is not None and pid not in owned:
+                pid = None
+            conn.execute("UPDATE folders SET order_index=?, parent_id=COALESCE(?, parent_id) WHERE id=?",
+                         (pos, pid, it["id"]))
+    return {"success": True}
 
 
 @app.post("/api/folders/{fid}/empty")

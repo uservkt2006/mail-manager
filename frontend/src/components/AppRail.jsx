@@ -1,11 +1,12 @@
 import React from 'react'
-import { Mail, CalendarDays, Users, CheckSquare, Settings } from 'lucide-react'
+import { Mail, CalendarDays, Users, CheckSquare, Settings, Zap } from 'lucide-react'
 
 const MODULES = [
   { id: 'mail', label: 'Mail', icon: Mail },
   { id: 'calendar', label: 'Lịch', icon: CalendarDays },
   { id: 'people', label: 'People', icon: Users },
   { id: 'tasks', label: 'To Do', icon: CheckSquare },
+  { id: 'rules', label: 'Quy tắc', icon: Zap },
 ]
 
 export default function AppRail({ module, onModule, user, onSettings }) {

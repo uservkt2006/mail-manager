@@ -148,8 +148,16 @@ def _apply_delta(user_id, a, conn, by_name, row):
                         pass
                     if store_ews_message(conn, user_id, a["id"], row["local_folder_id"], m):
                         touched += 1
+                        _sender = ""
+                        try:
+                            _snd = getattr(m, "sender", None)
+                            _sender = str(getattr(_snd, "name", "") or getattr(_snd, "email_address", "") or "")
+                        except Exception:
+                            _sender = ""
                         publish(user_id, {"type": "new_mail",
                                           "subject": getattr(m, "subject", "") or "",
+                                          "from": _sender,
+                                          "folder": path[-1] if path else "",
                                           "ts": time.time()})
                     elif change_type == "update":
                         publish(user_id, {"type": "changed", "ts": time.time()})

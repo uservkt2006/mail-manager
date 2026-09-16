@@ -1,30 +1,61 @@
 import React, { useState } from 'react'
-import { ChevronDown, ChevronRight, Inbox, Send, FileText, Trash2, Archive, Folder as FolderIcon, Plus, X, Search, PenLine, FolderPlus, MailOpen, Zap } from 'lucide-react'
+import { ChevronDown, ChevronRight, Inbox, Send, FileText, Trash2, Archive, Folder as FolderIcon, Plus, X, Search, PenLine, FolderPlus, MailOpen, Zap, MoreVertical } from 'lucide-react'
 import { api } from '../api'
 import ContextMenu from './ContextMenu'
 
 const TYPE_ICON = { inbox: Inbox, sent: Send, drafts: FileText, trash: Trash2, archive: Archive }
 
-function Node({ node, depth, activeId, onSelect, onContext, onDropMail }) {
+function Node({ node, depth, activeId, onSelect, onContext, onDropMail, onReorder }) {
   const [open, setOpen] = useState(true)
   const [dragOver, setDragOver] = useState(false)
+  const [dropPos, setDropPos] = useState(null)   // 'above' | 'below' | null (insertion indicator)
   const hasKids = node.children && node.children.length > 0
   const Icon = TYPE_ICON[node.type] || FolderIcon
   const active = String(activeId) === String(node.id)
+
+  const handleDragStart = (e) => {
+    e.dataTransfer.setData('text/mm-folder-id', String(node.id))
+    e.dataTransfer.effectAllowed = 'move'
+  }
+
+  const handleDragOver = (e) => {
+    if (!e.dataTransfer?.types?.includes('text/mm-folder-id')) return
+    e.preventDefault()
+    e.stopPropagation()
+    const r = e.currentTarget.getBoundingClientRect()
+    // Outlook: top 30% = insert before, bottom 30% = insert after, middle = nest
+    const ratio = (e.clientY - r.top) / r.height
+    setDropPos(ratio < 0.3 ? 'above' : ratio > 0.7 ? 'below' : 'inside')
+  }
+
+  const handleDrop = (e) => {
+    e.preventDefault()
+    e.stopPropagation()
+    const fid = e.dataTransfer.getData('text/mm-folder-id')
+    const mid = e.dataTransfer.getData('text/mm-mail-id')
+    setDragOver(false)
+    if (fid && fid !== String(node.id)) {
+      onReorder(fid, node, dropPos || 'inside')
+    } else if (mid) {
+      onDropMail(mid, node)
+    }
+  }
+
   return (
     <div>
       <div
-        className={`folder-item group flex items-center gap-2 pr-2 rounded-md text-sm cursor-pointer ${active ? 'active' : 'text-ink-dim'} ${dragOver ? 'ring-1 ring-primary bg-pa10' : ''}`}
-        style={{ paddingLeft: 12 + depth * 14 }}
+        draggable
+        onDragStart={handleDragStart}
+        onDragLeave={() => { setDragOver(false); setDropPos(null) }}
+        onDragOver={handleDragOver}
+        onDrop={handleDrop}
         onClick={() => onSelect(node)}
         onContextMenu={e => { e.preventDefault(); onContext(node, e.clientX, e.clientY) }}
-        onDragOver={e => { if (e.dataTransfer?.types?.includes('text/mm-mail-id')) { e.preventDefault(); setDragOver(true) } }}
-        onDragLeave={() => setDragOver(false)}
-        onDrop={e => {
-          const id = e.dataTransfer?.getData('text/mm-mail-id')
-          setDragOver(false)
-          if (id) { e.preventDefault(); onDropMail(id, node) }
-        }}
+        style={{ paddingLeft: 12 + depth * 14 }}
+        className={`folder-item group relative flex items-center gap-2 pr-2 rounded-md text-sm cursor-pointer
+          ${active ? 'active' : 'text-ink-dim'}
+          ${dragOver && (dropPos === 'inside' || !dropPos) ? 'ring-1 ring-primary bg-pa10' : ''}
+          ${dropPos === 'above' ? 'drop-above' : ''} ${dropPos === 'below' ? 'drop-below' : ''}`}
       >
         {hasKids ? (
           <button onClick={e => { e.stopPropagation(); setOpen(!open) }} className="text-ink-mute hover:text-ink">
@@ -37,7 +68,7 @@ function Node({ node, depth, activeId, onSelect, onContext, onDropMail }) {
       </div>
       {open && hasKids && node.children.map(c => (
         <Node key={c.id} node={c} depth={depth + 1} activeId={activeId}
-          onSelect={onSelect} onContext={onContext} onDropMail={onDropMail} />
+          onSelect={onSelect} onContext={onContext} onDropMail={onDropMail} onReorder={onReorder} />
       ))}
     </div>
   )
@@ -49,6 +80,35 @@ export default function FolderTree({ tree, activeFolderId, onSelect, onChanged, 
   const [name, setName] = useState('')
   const [inInbox, setInInbox] = useState(false)
   const [ctx, setCtx] = useState(null)   // {node, x, y}
+  const [parentForNew, setParentForNew] = useState(null)
+
+  // Reorder: flat list in the visual order after the drop, sent to the backend.
+  const reorderTo = async (dragId, target, pos) => {
+    const flat = []
+    const walk = (nodes, pid) => nodes.forEach(n => {
+      flat.push({ id: String(n.id), parent_id: pid })
+      if (n.children) walk(n.children, String(n.id))
+    })
+    walk(tree, null)
+    const dragIdx = flat.findIndex(f => f.id === dragId)
+    if (dragIdx < 0) return
+    const [moved] = flat.splice(dragIdx, 1)
+    let ti = flat.findIndex(f => f.id === String(target.id))
+    if (ti < 0) { ti = flat.length - 1 }
+    if (pos === 'above') flat.splice(ti, 0, moved)
+    else if (pos === 'below') flat.splice(ti + 1, 0, moved)
+    else { // nest: parent under target
+      moved.parent_id = String(target.id)
+      flat.splice(ti + 1, 0, moved)
+    }
+    try {
+      await api.reorderFolders(flat)
+      onChanged()
+    } catch (e) {
+      console.warn('reorder failed', e)
+      onChanged()  // revert visually by reloading
+    }
+  }
 
   const submitAdd = async (e) => {
     e.preventDefault()
@@ -61,7 +121,7 @@ export default function FolderTree({ tree, activeFolderId, onSelect, onChanged, 
     const isUser = node.type === 'user'
     const out = []
     out.push({ label: 'Mở', icon: FolderIcon, onClick: () => onSelect(node) })
-    out.push({ label: 'Tạo thư mục con…', icon: FolderPlus, onClick: () => setAddingWithParent(node) })
+    out.push({ label: 'Tạo thư mục con…', icon: FolderPlus, onClick: () => { setParentForNew(node); setAdding(true) } })
     if (isUser) {
       out.push({ sep: true })
       out.push({ label: 'Đánh dấu tất cả đã đọc', icon: MailOpen, onClick: async () => {
@@ -76,7 +136,6 @@ export default function FolderTree({ tree, activeFolderId, onSelect, onChanged, 
           if (!confirm(`Xóa TOÀN BỘ thư trong "${node.name}" (cả trên Exchange)?`)) return
           await api.emptyFolder(node.id)
           onChanged?.()
-          // progress + "Xóa hoàn tất" shown live in StatusBar via SSE empty_progress
         } })
       out.push({ label: 'Xóa thư mục', icon: X, danger: true,
         onClick: async () => {
@@ -87,13 +146,6 @@ export default function FolderTree({ tree, activeFolderId, onSelect, onChanged, 
     }
     return out
   }
-
-  const setAddingWithParent = (node) => {
-    setParentForNew(node)
-    setAdding(true)
-  }
-
-  const [parentForNew, setParentForNew] = useState(null)
 
   const rename = async (node) => {
     const nn = prompt('Tên mới cho thư mục:', node.name)
@@ -144,8 +196,10 @@ export default function FolderTree({ tree, activeFolderId, onSelect, onChanged, 
         {tree.map(n => (
           <Node key={n.id} node={n} depth={0} activeId={activeFolderId}
             onSelect={onSelect} onContext={(node, x, y) => setCtx({ node, x, y })}
-            onDropMail={async (mailId, node) => { await api.move(mailId, node.id); onChanged() }} />
+            onDropMail={async (mailId, node) => { await api.move(mailId, node.id); onChanged() }}
+            onReorder={reorderTo} />
         ))}
+        <div className="px-3 py-1.5 mt-1 text-[11px] text-ink-dim/70">Kéo thư mục để sắp xếp lại thứ tự</div>
 
         <div className="px-3 py-1.5 mt-2 text-[11px] font-semibold uppercase tracking-wider text-ink-mute flex items-center justify-between border-t border-dark-border">
           Search Folders
