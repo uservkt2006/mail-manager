@@ -22,33 +22,30 @@ function appRoot() {
 }
 
 function resolvePython() {
-  if (process.platform === 'win32') {
-    // Try embedded Python in extraResources
-    const embedded = path.join(process.resourcesPath || '', 'python', 'python.exe')
-    if (fs.existsSync(embedded)) return embedded
-    // Try local venv (dev)
-    const venvPy = path.join(appRoot(), 'backend', '.venv', 'Scripts', 'python.exe')
-    if (fs.existsSync(venvPy)) return venvPy
-    // Fallback to system
-    return 'python'
-  } else {
-    const embedded = path.join(process.resourcesPath || '', 'python', 'bin', 'python3')
-    if (fs.existsSync(embedded)) return embedded
-    const candidates = [
-      path.join(appRoot(), 'backend', '.venv', 'bin', 'python'),
-      '/usr/bin/python3',
-      '/usr/local/bin/python3',
-    ]
-    for (const p of candidates) if (fs.existsSync(p)) return p
-    return 'python3'
-  }
+  const isWin = process.platform === 'win32'
+  // 1. Try embedded Python in extraResources (works for both Linux & Windows in v3.6.9+)
+  const embedded = isWin
+    ? path.join(process.resourcesPath || '', 'python', 'python.exe')
+    : path.join(process.resourcesPath || '', 'python', 'bin', 'python3')
+  if (fs.existsSync(embedded)) return embedded
+
+  // 2. Fallback: bundled Python in app.asar (older builds)
+  const bundled = isWin
+    ? path.join(appRoot(), 'backend', '.venv', 'Scripts', 'python.exe')
+    : path.join(appRoot(), 'backend', '.venv', 'bin', 'python')
+  if (fs.existsSync(bundled)) return bundled
+
+  // 3. Try system Python
+  if (isWin) return 'python'
+  const systemPy = fs.existsSync('/usr/bin/python3') ? '/usr/bin/python3' : 'python3'
+  return systemPy
 }
 
 function resolveBackendScript() {
+  // For packaged apps, backend script is in app.asar
   const candidates = [
+    path.join(appRoot(), '_backend', 'app.py'),
     path.join(appRoot(), 'backend', 'app.py'),
-    path.join(process.resourcesPath || '', 'app', '_backend', 'app.py'),
-    path.join(process.resourcesPath || '', 'app', 'backend', 'app.py'),
   ]
   for (const p of candidates) if (fs.existsSync(p)) return p
   return null

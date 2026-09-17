@@ -46,6 +46,9 @@ jobs:
       - name: Bundle backend scripts
         run: bash scripts/bundle-backend.sh
 
+      - name: Bundle Python interpreter
+        run: python3 scripts/bundle-python.py
+
       - name: Update version in backend
         run: |
           VERSION="${{ github.event.inputs.version || github.ref_name }}"
@@ -96,6 +99,9 @@ jobs:
 
       - name: Bundle backend scripts
         run: bash scripts/bundle-backend.sh
+
+      - name: Bundle Python interpreter
+        run: python3 scripts/bundle-python.py
 
       - name: Update version in backend
         run: |

@@ -1,6 +1,6 @@
 {
   "name": "mail-manager",
-  "version": "3.6.0",
+  "version": "3.6.9",
   "description": "Mail Manager - Exchange email client for Ubuntu",
   "main": "electron/main.cjs",
   "author": "Võ Khắc Tâm <vokhactam01@gmail.com>",
@@ -49,6 +49,11 @@
       },
       {
         "from": "../build/python-embed-amd64",
+        "to": "python",
+        "filter": ["**/*"]
+      },
+      {
+        "from": "../build/python-linux-x64",
         "to": "python",
         "filter": ["**/*"]
       }
