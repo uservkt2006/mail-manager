@@ -46,7 +46,7 @@ jobs:
       - name: Bundle backend scripts
         run: bash scripts/bundle-backend.sh
 
-      - name: Bundle Python interpreter
+      - name: Bundle Python interpreter (Linux venv)
         run: python3 scripts/bundle-python.py
 
       - name: Update version in backend
@@ -100,8 +100,20 @@ jobs:
       - name: Bundle backend scripts
         run: bash scripts/bundle-backend.sh
 
-      - name: Bundle Python interpreter
-        run: python3 scripts/bundle-python.py
+      - name: Download Windows embed Python
+        shell: bash
+        run: |
+          if [ ! -d build/python-embed-amd64 ]; then
+            mkdir -p build
+            curl -sL -o /tmp/python-embed.zip https://www.python.org/ftp/python/3.11.9/python-3.11.9-embed-amd64.zip
+            mkdir -p build/python-embed-amd64
+            unzip -q /tmp/python-embed.zip -d build/python-embed-amd64
+            # Uncomment site-packages
+            sed -i 's/^#import site/import site/' build/python-embed-amd64/python311._pth
+            echo "Lib\\site-packages" >> build/python-embed-amd64/python311._pth
+            rm /tmp/python-embed.zip
+          fi
+          echo "✓ Windows Python ready"
 
       - name: Update version in backend
         run: |
