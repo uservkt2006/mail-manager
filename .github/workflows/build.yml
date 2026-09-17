@@ -43,12 +43,6 @@ jobs:
       - name: Build frontend
         run: cd frontend && npm run build
 
-      - name: Bundle backend scripts
-        run: bash scripts/bundle-backend.sh
-
-      - name: Bundle Python interpreter (Linux venv)
-        run: python3 scripts/bundle-python.py
-
       - name: Update version in backend
         run: |
           VERSION="${{ github.event.inputs.version || github.ref_name }}"
@@ -58,6 +52,21 @@ jobs:
           sed -i -E "s/\"version\": \"3\.[0-9]+\.[0-9]+\"/\"version\": \"$VERSION\"/" frontend/package.json
           echo "--- After update ---"
           grep -E "3\.[0-9]+\.[0-9]+" backend/app.py | head -10
+
+      - name: Bundle backend scripts
+        run: bash scripts/bundle-backend.sh
+
+      - name: Bundle Python interpreter (Linux venv)
+        run: python3 scripts/bundle-python.py
+
+      - name: Update version in backend (run again after bundling)
+        run: |
+          VERSION="${{ github.event.inputs.version || github.ref_name }}"
+          VERSION="${VERSION#v}"
+          # The bundled copy is in frontend/_backend - update it too
+          sed -i -E "s/\"3\.[0-9]+\.[0-9]+\"/\"$VERSION\"/g" frontend/_backend/app.py
+          echo "--- After update ---"
+          grep -E "3\.[0-9]+\.[0-9]+" frontend/_backend/app.py | head -10
 
       - name: Build Linux packages (AppImage + .deb)
         run: |
@@ -99,6 +108,12 @@ jobs:
 
       - name: Build frontend
         run: cd frontend && npm run build
+
+      - name: Update version in backend
+        run: |
+          $ver = "${{ github.event.inputs.version || github.ref_name }}".TrimStart('v')
+          (Get-Content backend/app.py) -replace '"3\.\d+\.\d+"', "`"$ver`"" | Set-Content backend/app.py
+          (Get-Content frontend/package.json) -replace '"version":\s*"3\.\d+\.\d+"', "`"version`": `"$ver`"" | Set-Content frontend/package.json
 
       - name: Bundle backend scripts
         run: bash scripts/bundle-backend.sh
