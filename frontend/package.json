@@ -46,6 +46,11 @@
         "from": "../build",
         "to": "build",
         "filter": ["**/*"]
+      },
+      {
+        "from": "../build/python-embed-amd64",
+        "to": "python",
+        "filter": ["**/*"]
       }
     ],
     "linux": {

@@ -13,32 +13,41 @@ let backendProcess = null
 
 // Resolve paths in both dev and packaged mode
 function appRoot() {
-  // In packaged: resources/app/, app.asar
-  // In dev: frontend/
-  return app.isPackaged ? path.join(process.resourcesPath) : path.join(__dirname, '..', '..')
+  // Packaged: project dir is one level above app.asar (resources/app/)
+  // Dev: project dir is parent of frontend/
+  if (app.isPackaged) {
+    return path.join(process.resourcesPath, 'app')
+  }
+  return path.join(__dirname, '..', '..')
 }
 
 function resolvePython() {
   if (process.platform === 'win32') {
-    const candidates = [
-      path.join(appRoot(), 'backend', '.venv', 'Scripts', 'python.exe'),
-      path.join(process.resourcesPath || '', 'app', 'backend', '.venv', 'Scripts', 'python.exe'),
-    ]
-    for (const p of candidates) if (fs.existsSync(p)) return p
+    // Try embedded Python in extraResources
+    const embedded = path.join(process.resourcesPath || '', 'python', 'python.exe')
+    if (fs.existsSync(embedded)) return embedded
+    // Try local venv (dev)
+    const venvPy = path.join(appRoot(), 'backend', '.venv', 'Scripts', 'python.exe')
+    if (fs.existsSync(venvPy)) return venvPy
+    // Fallback to system
+    return 'python'
   } else {
+    const embedded = path.join(process.resourcesPath || '', 'python', 'bin', 'python3')
+    if (fs.existsSync(embedded)) return embedded
     const candidates = [
       path.join(appRoot(), 'backend', '.venv', 'bin', 'python'),
-      path.join(process.resourcesPath || '', 'app', 'backend', '.venv', 'bin', 'python'),
       '/usr/bin/python3',
+      '/usr/local/bin/python3',
     ]
     for (const p of candidates) if (fs.existsSync(p)) return p
+    return 'python3'
   }
-  return process.platform === 'win32' ? 'python' : 'python3'
 }
 
 function resolveBackendScript() {
   const candidates = [
     path.join(appRoot(), 'backend', 'app.py'),
+    path.join(process.resourcesPath || '', 'app', '_backend', 'app.py'),
     path.join(process.resourcesPath || '', 'app', 'backend', 'app.py'),
   ]
   for (const p of candidates) if (fs.existsSync(p)) return p
@@ -47,7 +56,7 @@ function resolveBackendScript() {
 
 function resolveFrontendDist() {
   const candidates = [
-    path.join(__dirname, '..', 'dist'),
+    path.join(appRoot(), 'dist'),
     path.join(process.resourcesPath || '', 'app', 'dist'),
   ]
   for (const p of candidates) if (fs.existsSync(p)) return p
@@ -68,21 +77,22 @@ function startBackend() {
     env: {
       ...process.env,
       MM_DEMO: '0',
-      PORT: '18685'
+      PORT: '18685',
+      PYTHONUNBUFFERED: '1'
     }
   })
   backendProcess.stdout?.on('data', d => console.log('[backend]', d.toString().trim()))
   backendProcess.stderr?.on('data', d => console.error('[backend]', d.toString().trim()))
-  backendProcess.on('error', err => console.error('Backend spawn error:', err))
+  backendProcess.on('error', err => console.error('Backend spawn error:', err.message))
   backendProcess.on('exit', code => console.log('Backend exited with code', code))
   return backendProcess
 }
 
-function waitForBackend(port = 18685, attempts = 30) {
+function waitForBackend(port = 18685, attempts = 40) {
   return new Promise((resolve, reject) => {
     let tries = 0
     const check = () => {
-      const req = http.get({ hostname: '127.0.0.1', port, path: '/api/health', timeout: 1000 }, res => {
+      const req = http.get({ hostname: '127.0.0.1', port, path: '/api/health', timeout: 1500 }, res => {
         if (res.statusCode === 200) resolve()
         else retry()
       })
@@ -90,7 +100,7 @@ function waitForBackend(port = 18685, attempts = 30) {
       req.on('timeout', () => { req.destroy(); retry() })
     }
     const retry = () => {
-      if (++tries >= attempts) return reject(new Error('Backend not responding'))
+      if (++tries >= attempts) return reject(new Error(`Backend not responding after ${attempts} attempts on port ${port}`))
       setTimeout(check, 500)
     }
     check()
@@ -112,7 +122,6 @@ function startProxy(backendPort = 18685, frontendPort = 5174) {
   }
 
   const server = http.createServer((req, res) => {
-    // Proxy /api/* → backend
     if (req.url.startsWith('/api/')) {
       const proxyReq = http.request({
         hostname: '127.0.0.1', port: backendPort, path: req.url,
@@ -122,12 +131,12 @@ function startProxy(backendPort = 18685, frontendPort = 5174) {
         proxyRes.pipe(res)
       })
       proxyReq.on('error', () => {
-        res.writeHead(502); res.end(JSON.stringify({error: 'backend down'}))
+        res.writeHead(502, {'Content-Type':'application/json'})
+        res.end(JSON.stringify({error: 'backend down', hint: 'Python venv not bundled. Install Python 3.11 or use the Linux .deb'}))
       })
       req.pipe(proxyReq)
       return
     }
-    // Serve frontend dist (SPA fallback to index.html)
     let filePath = path.join(distDir, req.url === '/' ? 'index.html' : req.url)
     if (!fs.existsSync(filePath) || fs.statSync(filePath).isDirectory()) {
       filePath = path.join(distDir, 'index.html')
@@ -189,7 +198,8 @@ async function createWindow() {
     } catch (e) {
       console.error('Backend startup failed:', e.message)
       mainWindow.show()
-      mainWindow.loadURL(`data:text/html,<html><body style='background:#0c0e12;color:#ff6b6b;font-family:sans-serif;padding:40px;'><h2>Backend startup failed</h2><p>${e.message}</p><p>Check ~/.mail_manager/ logs and Python venv at backend/.venv</p></body></html>`)
+      const errMsg = e.message.replace(/'/g, "\\'")
+      mainWindow.loadURL(`data:text/html;charset=utf-8,<html><body style='background:%230c0e12;color:%23ff6b6b;font-family:sans-serif;padding:40px;'><h2>Backend startup failed</h2><p>${errMsg}</p><p style='color:%23888'>Check Python venv at backend/.venv, or install Python 3.11 and run:<br><code>pip install -r requirements.txt</code></p></body></html>`)
     }
   }
 
