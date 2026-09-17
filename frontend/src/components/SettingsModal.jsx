@@ -501,10 +501,6 @@ function ArchiveDialog({ folders, onClose, onMsg }) {
   }
   walk(folders)
 
-  if (showingArchiveDialog) {
-    return <ArchiveDialog folders={folders} onClose={() => setShowingArchiveDialog(false)} onMsg={setMsg} />
-  }
-
   return (
     <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50" onMouseDown={onClose}>
       <div onMouseDown={e => e.stopPropagation()} className="bg-dark-surface border border-dark-border rounded-xl w-[480px] max-w-[94vw] max-h-[80vh] flex flex-col shadow-2xl">
