@@ -20,48 +20,48 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      
+
       - name: Install Python dependencies
         run: |
           cd backend
           python -m venv .venv
           .venv/bin/pip install -r requirements.txt
-      
+
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-      
+
       - name: Install frontend dependencies
         run: cd frontend && npm ci
-      
+
       - name: Build frontend
         run: cd frontend && npm run build
-      
+
       - name: Update version in backend
         run: |
-          $version = "${{ github.event.inputs.version || github.ref_name }}"
-          $version = $version -replace '^v', ''
-          (Get-Content backend/app.py) -replace '3.4.0', $version | Set-Content backend/app.py
-          (Get-Content frontend/package.json) -replace '1.0.0', $version | Set-Content frontend/package.json
-      
+          VERSION="${{ github.event.inputs.version || github.ref_name }}"
+          VERSION="${VERSION#v}"
+          sed -i "s/\"version\": \"3.4.0\"/\"version\": \"$VERSION\"/" backend/app.py
+          sed -i "s/\"version\": \"1.0.0\"/\"version\": \"$VERSION\"/" frontend/package.json
+
       - name: Build Linux packages (AppImage + .deb)
         run: |
           cd frontend
           npx electron-builder --linux AppImage deb --publish never
           cd ..
-      
+
       - name: Generate checksums
         run: |
           VERSION="${{ github.event.inputs.version || github.ref_name }}"
           VERSION="${VERSION#v}"
           sha256sum frontend/dist/*.AppImage frontend/dist/*.deb > checksums.txt
-      
+
       - name: Upload Linux assets
         uses: softprops/action-gh-release@v1
         if: startsWith(github.ref, 'refs/tags/')
@@ -79,40 +79,40 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-      
+
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-      
+
       - name: Install frontend dependencies
         run: cd frontend && npm ci
-      
+
       - name: Build frontend
         run: cd frontend && npm run build
-      
+
       - name: Update version in backend
         run: |
           $version = "${{ github.event.inputs.version || github.ref_name }}"
           $version = $version -replace '^v', ''
-          (Get-Content backend/app.py) -replace '"version": "3.4.0"', "\"version\": `"$version`"" | Set-Content backend/app.py
-          (Get-Content frontend/package.json) -replace '"version": "1.0.0"', "\"version\": `"$version`"" | Set-Content frontend/package.json
-      
+          (Get-Content backend/app.py) -replace '\"version\": \"3.4.0\"', "\"version\": `"$version`"" | Set-Content backend/app.py
+          (Get-Content frontend/package.json) -replace '\"version\": \"1.0.0\"', "\"version\": `"$version`"" | Set-Content frontend/package.json
+
       - name: Build Windows executable
         run: |
           cd frontend
           npx electron-builder --win nsis --publish never
           cd ..
-      
+
       - name: Generate checksums
         run: |
           $version = "${{ github.event.inputs.version || github.ref_name }}"
           $version = $version -replace '^v', ''
-          Get-ChildItem frontend/dist/*.exe | ForEach-Object { 
+          Get-ChildItem frontend/dist/*.exe | ForEach-Object {
             $hash = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower()
             "$hash  $($_.Name)"
           } | Out-File -FilePath checksums.txt -Encoding utf8
-      
+
       - name: Upload Windows asset
         uses: softprops/action-gh-release@v1
         if: startsWith(github.ref, 'refs/tags/')
