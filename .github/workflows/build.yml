@@ -53,8 +53,8 @@ jobs:
         run: |
           VERSION="${{ github.event.inputs.version || github.ref_name }}"
           VERSION="${VERSION#v}"
-          sed -i "s/\"version\": \"3.4.0\"/\"version\": \"$VERSION\"/" backend/app.py
-          sed -i "s/\"version\": \"3.6.0\"/\"version\": \"$VERSION\"/" frontend/package.json
+          sed -i "s/\"version\": \"3.5.8\"/\"version\": \"$VERSION\"/" backend/app.py
+          sed -i "s/\"version\": \"3.6.9\"/\"version\": \"$VERSION\"/" frontend/package.json
 
       - name: Build Linux packages (AppImage + .deb)
         run: |
@@ -119,7 +119,7 @@ jobs:
         run: |
           $ver = "${{ github.event.inputs.version || github.ref_name }}".TrimStart('v')
           (Get-Content backend/app.py) -replace '3.5.8', $ver | Set-Content backend/app.py
-          (Get-Content frontend/package.json) -replace '3.6.0', $ver | Set-Content frontend/package.json
+          (Get-Content frontend/package.json) -replace '3.6.9', $ver | Set-Content frontend/package.json
 
       - name: Build Windows executable
         run: |
