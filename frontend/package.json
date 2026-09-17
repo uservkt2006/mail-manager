@@ -1,6 +1,6 @@
 {
   "name": "mail-manager",
-  "version": "3.6.9",
+  "version": "3.6.17",
   "description": "Mail Manager - Exchange email client for Ubuntu",
   "main": "electron/main.cjs",
   "author": "Võ Khắc Tâm <vokhactam01@gmail.com>",
@@ -37,15 +37,21 @@
     "files": [
       "dist/**/*",
       "electron/**/*",
-      "_backend/**/*",
-      "../build/icon.png",
-      "../build/icon.ico"
+      "_backend/**/*"
     ],
     "extraResources": [
       {
-        "from": "../build",
-        "to": "build",
+        "from": "../build/icons",
+        "to": "icons",
         "filter": ["**/*"]
+      },
+      {
+        "from": "../build/icon.png",
+        "to": "icon.png"
+      },
+      {
+        "from": "../build/icon.ico",
+        "to": "icon.ico"
       },
       {
         "from": "../frontend/_backend",
