@@ -1,4 +1,5 @@
-#!/home/vokhactam/tamvk/mail-app/backend/.venv/bin/python3.11
+#!/bin/sh
+"exec" "$(dirname $0)/python3.11" "$0" "$@"
 # -*- coding: utf-8 -*-
 import re
 import sys
