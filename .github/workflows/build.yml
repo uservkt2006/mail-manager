@@ -43,6 +43,9 @@ jobs:
       - name: Build frontend
         run: cd frontend && npm run build
 
+      - name: Bundle backend scripts
+        run: bash scripts/bundle-backend.sh
+
       - name: Update version in backend
         run: |
           VERSION="${{ github.event.inputs.version || github.ref_name }}"
@@ -90,6 +93,9 @@ jobs:
 
       - name: Build frontend
         run: cd frontend && npm run build
+
+      - name: Bundle backend scripts
+        run: bash scripts/bundle-backend.sh
 
       - name: Update version in backend
         run: |

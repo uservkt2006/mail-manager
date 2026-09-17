@@ -37,11 +37,9 @@
     "files": [
       "dist/**/*",
       "electron/**/*",
+      "_backend/**/*",
       "../build/icon.png",
-      "../build/icon.ico",
-      "../backend/app.py",
-      "../backend/realtime.py",
-      "../backend/requirements.txt"
+      "../build/icon.ico"
     ],
     "extraResources": [
       {
