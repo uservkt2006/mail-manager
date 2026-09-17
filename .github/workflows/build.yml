@@ -48,7 +48,7 @@ jobs:
           VERSION="${{ github.event.inputs.version || github.ref_name }}"
           VERSION="${VERSION#v}"
           sed -i "s/\"version\": \"3.4.0\"/\"version\": \"$VERSION\"/" backend/app.py
-          sed -i "s/\"version\": \"1.0.0\"/\"version\": \"$VERSION\"/" frontend/package.json
+          sed -i "s/\"version\": \"3.5.1\"/\"version\": \"$VERSION\"/" frontend/package.json
 
       - name: Build Linux packages (AppImage + .deb)
         run: |
@@ -93,10 +93,9 @@ jobs:
 
       - name: Update version in backend
         run: |
-          $version = "${{ github.event.inputs.version || github.ref_name }}"
-          $version = $version -replace '^v', ''
-          (Get-Content backend/app.py) -replace '\"version\": \"3.4.0\"', "\"version\": `"$version`"" | Set-Content backend/app.py
-          (Get-Content frontend/package.json) -replace '\"version\": \"1.0.0\"', "\"version\": `"$version`"" | Set-Content frontend/package.json
+          $ver = "${{ github.event.inputs.version || github.ref_name }}".TrimStart('v')
+          (Get-Content backend/app.py) -replace '3.4.0', $ver | Set-Content backend/app.py
+          (Get-Content frontend/package.json) -replace '3.5.1', $ver | Set-Content frontend/package.json
 
       - name: Build Windows executable
         run: |
@@ -106,8 +105,6 @@ jobs:
 
       - name: Generate checksums
         run: |
-          $version = "${{ github.event.inputs.version || github.ref_name }}"
-          $version = $version -replace '^v', ''
           Get-ChildItem frontend/dist/*.exe | ForEach-Object {
             $hash = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower()
             "$hash  $($_.Name)"
