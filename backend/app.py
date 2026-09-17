@@ -3357,7 +3357,7 @@ def _github_release(client_version="3.4.0"):
     import json as _json
     try:
         req = urllib.request.Request(
-            "https://api.github.com/repos/vokhactam/mail-manager/releases/latest",
+            "https://api.github.com/repos/uservkt2006/mail-manager/releases/latest",
             headers={"User-Agent": "MailManager/1.0"}
         )
         with urllib.request.urlopen(req, timeout=10) as resp:
