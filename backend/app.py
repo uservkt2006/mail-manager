@@ -3351,7 +3351,7 @@ async def api_account_add(req: AccountConfig, user: dict = Depends(current_user)
 
 
 # ─── auto-update ──────────────────────────────────────────────────────────
-def _github_release(client_version="3.4.0"):
+def _github_release(client_version="3.5.1"):
     """Check GitHub releases for newer version. Returns dict with update info."""
     import urllib.request
     import json as _json
@@ -3388,7 +3388,7 @@ def _github_release(client_version="3.4.0"):
 @app.get("/api/update/check")
 async def api_update_check():
     """Check if a newer version is available on GitHub."""
-    return _github_release("3.4.0")
+    return _github_release("3.5.1")
 
 
 @app.get("/api/update/download")
