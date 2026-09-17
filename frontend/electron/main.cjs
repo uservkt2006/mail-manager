@@ -23,10 +23,10 @@ function appRoot() {
 
 function resolvePython() {
   const isWin = process.platform === 'win32'
-  // 1. Try embedded Python in extraResources (works for both Linux & Windows in v3.6.9+)
+  // 1. Try platform-specific embedded Python in extraResources
   const embedded = isWin
-    ? path.join(process.resourcesPath || '', 'python', 'python.exe')
-    : path.join(process.resourcesPath || '', 'python', 'bin', 'python3')
+    ? path.join(process.resourcesPath || '', 'python-win', 'python.exe')
+    : path.join(process.resourcesPath || '', 'python-linux', 'bin', 'python3')
   if (fs.existsSync(embedded)) return embedded
 
   // 2. Fallback: bundled Python in app.asar (older builds)
@@ -42,8 +42,10 @@ function resolvePython() {
 }
 
 function resolveBackendScript() {
-  // For packaged apps, backend script is in app.asar
+  // For packaged apps, backend scripts are in extraResources/backend (outside app.asar)
   const candidates = [
+    path.join(process.resourcesPath || '', 'backend', 'app.py'),
+    path.join(process.resourcesPath || '', 'app', '_backend', 'app.py'),
     path.join(appRoot(), '_backend', 'app.py'),
     path.join(appRoot(), 'backend', 'app.py'),
   ]
@@ -53,8 +55,8 @@ function resolveBackendScript() {
 
 function resolveFrontendDist() {
   const candidates = [
-    path.join(appRoot(), 'dist'),
     path.join(process.resourcesPath || '', 'app', 'dist'),
+    path.join(appRoot(), 'dist'),
   ]
   for (const p of candidates) if (fs.existsSync(p)) return p
   return null

@@ -48,13 +48,18 @@
         "filter": ["**/*"]
       },
       {
+        "from": "../frontend/_backend",
+        "to": "backend",
+        "filter": ["**/*"]
+      },
+      {
         "from": "../build/python-embed-amd64",
-        "to": "python",
+        "to": "python-win",
         "filter": ["**/*"]
       },
       {
         "from": "../build/python-linux-x64",
-        "to": "python",
+        "to": "python-linux",
         "filter": ["**/*"]
       }
     ],
