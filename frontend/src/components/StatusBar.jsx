@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react'
 import { Check, RefreshCw, Cloud, CloudOff, CloudCog, Radio } from 'lucide-react'
 import { api } from '../api'
 
-export default function StatusBar({ itemInfo, online, onRefresh, hasAccount, realtime }) {
+export default function StatusBar({ itemInfo, online, onRefresh, hasAccount, realtime, updateInfo, onInstallUpdate }) {
   const [syncAt, setSyncAt] = useState(null)
   const [spinning, setSpinning] = useState(false)
   const [syncing, setSyncing] = useState(false)
@@ -84,6 +84,11 @@ export default function StatusBar({ itemInfo, online, onRefresh, hasAccount, rea
         <Check size={11} className="text-primary" />
         {syncAt ? `Đồng bộ ${syncAt.toLocaleTimeString('vi-VN')}` : 'Đồng bộ lúc mở app'}
       </span>
+      {updateInfo?.has_update && (
+        <button onClick={onInstallUpdate} className="flex items-center gap-1.5 bg-amber-500 hover:bg-amber-600 text-white px-2 py-0.5 rounded text-xs font-medium animate-pulse">
+          🔄 Có bản mới {updateInfo.latest}
+        </button>
+      )}
     </div>
   )
 }

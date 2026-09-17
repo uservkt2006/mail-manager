@@ -33,6 +33,7 @@ export default function App() {
   const [rt, setRt] = useState(null)   // last realtime event {type, subject, ts}
   const [rulesFolders, setRulesFolders] = useState([])
   const [ruleModal, setRuleModal] = useState(null)   // {mode:'new'|'edit', rule?}
+  const [updateInfo, setUpdateInfo] = useState(null)   // {has_update, latest, current, download_url}
 
   // folder tree is needed by both MailView and the rules editor
   const refreshFolders = useCallback(() => {
@@ -140,6 +141,12 @@ export default function App() {
     return () => window.removeEventListener('keydown', onKey)
   }, [user])
 
+  // Check for updates when user logs in
+  useEffect(() => {
+    if (!user) return
+    api.updateCheck().then(d => setUpdateInfo(d)).catch(() => {})
+  }, [user])
+
   if (booting) {
     return <div className="h-screen flex items-center justify-center bg-dark-bg text-ink-mute text-sm">Đang tải…</div>
   }
@@ -168,7 +175,11 @@ export default function App() {
             <RulesView folders={rulesFolders} onNew={() => setRuleModal({ mode: 'new' })}
               onEdit={(r) => setRuleModal({ mode: 'edit', rule: r })} />
           )}
-          <StatusBar online={online} itemInfo="" hasAccount={hasAccount} realtime={rt} onRefresh={() => window.dispatchEvent(new Event('mm-synced'))} />
+          <StatusBar online={online} itemInfo="" hasAccount={hasAccount} realtime={rt} onRefresh={() => window.dispatchEvent(new Event('mm-synced'))} updateInfo={updateInfo} onInstallUpdate={() => {
+            if (updateInfo?.download_url) {
+              window.open(updateInfo.download_url, '_blank')
+            }
+          }} />
         </div>
       </div>
       {showSettings && <SettingsModal user={user} section={settingsSection} onClose={() => setShowSettings(false)} onLogout={logout} folders={rulesFolders} />}

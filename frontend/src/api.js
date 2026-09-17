@@ -100,7 +100,10 @@ export const api = {
   addAccount: (a) => req('POST', '/accounts', a),
   audit: () => req('GET', '/audit'),
   settings: () => req('GET', '/settings'),
-  saveSettings: (values) => req('PUT', '/settings', { values })
+  saveSettings: (values) => req('PUT', '/settings', { values }),
+  // auto-update
+  updateCheck: () => req('GET', '/update/check'),
+  updateDownload: () => req('GET', '/update/download'),
 }
 
 // push theme/density prefs to the server (best-effort, silent on failure)
