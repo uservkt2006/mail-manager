@@ -171,7 +171,7 @@ function ArchiveBrowser({ onOpenMail }) {
   )
 }
 
-export default function SettingsModal({ user, section = 'general', onClose, onLogout }) {
+export default function SettingsModal({ user, section = 'general', onClose, onLogout, folders = [] }) {
   const [sec, setSec] = useState(section)
   const [settings, setSettings] = useState(null)
   const [accounts, setAccounts] = useState([])
@@ -179,6 +179,7 @@ export default function SettingsModal({ user, section = 'general', onClose, onLo
   const [acctForm, setAcctForm] = useState({ email: '', password: '', exchange_url: 'https://mail.fpt.net/EWS/Exchange.asmx' })
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState(null)
+  const [showingArchiveDialog, setShowingArchiveDialog] = useState(false)
   const [themePref, setThemePref] = useState(getTheme())
   const [density, setDensityState] = useState(getDensity())
   const [pane, setPaneState] = useState(getReadingPane())
@@ -215,6 +216,10 @@ export default function SettingsModal({ user, section = 'general', onClose, onLo
       setMsg({ ok: true, text: `Đồng bộ xong: +${t.messages || 0} mail · +${t.events || 0} lịch · +${t.contacts || 0} liên hệ` })
       load()
     } catch (e) { setMsg({ ok: false, text: e.message }) } finally { setBusy(false) }
+  }
+
+  if (showingArchiveDialog) {
+    return <ArchiveDialog folders={folders} onClose={() => setShowingArchiveDialog(false)} onMsg={setMsg} />
   }
 
   return (
@@ -315,7 +320,12 @@ export default function SettingsModal({ user, section = 'general', onClose, onLo
 
             {sec === 'archive' && settings && (
               <div className="space-y-5">
-                <h3 className="text-base font-semibold text-ink-strong">Lưu trữ mail về máy</h3>
+                <div className="flex items-center justify-between">
+                  <h3 className="text-base font-semibold text-ink-strong">Lưu trữ mail về máy</h3>
+                  <button onClick={() => setShowingArchiveDialog(true)} className="btn-primary text-sm flex items-center gap-1.5">
+                    <Archive size={14} /> Lưu trữ theo folder…
+                  </button>
+                </div>
                 <p className="text-xs text-ink-mute leading-relaxed">
                   Xuất mỗi thư ra file <code className="bg-dark-bg px-1 py-0.5 rounded">.eml</code> (định dạng chuẩn, mở lại bằng Thunderbird/Apple Mail), xoá bản sao trên Exchange để giải phóng
                   quota hộp thư FPT. Thư đã lưu trữ vẫn nằm trong danh sách và tìm kiếm; khi muốn xem mail server bấm
@@ -454,50 +464,92 @@ export default function SettingsModal({ user, section = 'general', onClose, onLo
   )
 }
 
-const inp = "w-full bg-dark-bg border border-dark-border rounded-md px-3.5 py-2.5 text-sm text-ink placeholder-ink-mute focus:outline-none focus:border-primary"
 
-function Row({ label, hint, children }) {
+function ArchiveDialog({ folders, onClose, onMsg }) {
+  const [selectedFolders, setSelectedFolders] = useState([])
+  const [beforeDate, setBeforeDate] = useState('')
+  const [includeSub, setIncludeSub] = useState(true)
+  const [busy, setBusy] = useState(false)
+  const [result, setResult] = useState(null)
+  const [err, setErr] = useState(null)
+
+  const toggleFolder = (id) => {
+    setSelectedFolders(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id])
+  }
+
+  const handleArchive = async () => {
+    if (!beforeDate) { setErr('Vui lòng chọn ngày'); return }
+    if (selectedFolders.length === 0) { setErr('Vui lòng chọn ít nhất một thư mục'); return }
+    setBusy(true); setErr(null); setResult(null)
+    try {
+      const r = await api.archiveBatch({ folder_ids: selectedFolders, before_date: beforeDate, include_subfolders: includeSub })
+      setResult(r)
+      if (r.archived > 0) onMsg?.({ ok: true, text: `Đã lưu trữ ${r.archived} thư` })
+      else onMsg?.({ ok: true, text: 'Không có thư nào cần lưu trữ' })
+    } catch (e) {
+      setErr(e.message)
+      onMsg?.({ ok: false, text: e.message })
+    } finally { setBusy(false) }
+  }
+
+  const flatFolders = []
+  const walk = (nodes, depth = 0) => {
+    for (const n of nodes) {
+      flatFolders.push({ ...n, depth })
+      if (n.children) walk(n.children, depth + 1)
+    }
+  }
+  walk(folders)
+
+  if (showingArchiveDialog) {
+    return <ArchiveDialog folders={folders} onClose={() => setShowingArchiveDialog(false)} onMsg={setMsg} />
+  }
+
   return (
-    <div className="flex items-center justify-between gap-4">
-      <div>
-        <div className="text-sm text-ink">{label}</div>
-        {hint && <div className="text-[11px] text-ink-mute mt-0.5">{hint}</div>}
+    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50" onMouseDown={onClose}>
+      <div onMouseDown={e => e.stopPropagation()} className="bg-dark-surface border border-dark-border rounded-xl w-[480px] max-w-[94vw] max-h-[80vh] flex flex-col shadow-2xl">
+        <div className="flex items-center justify-between px-5 py-3.5 border-b border-dark-border shrink-0">
+          <h2 className="text-sm font-semibold text-ink-strong flex items-center gap-2"><Archive size={15} /> Lưu trữ mail theo folder</h2>
+          <button onClick={onClose} className="p-1 rounded hover:bg-dark-hover text-ink-dim"><X size={16} /></button>
+        </div>
+        <div className="flex-1 overflow-y-auto p-5 space-y-4">
+          <div>
+            <label className="text-xs text-ink-dim mb-1 block">Chọn ngày (lưu trữ thư trước ngày này)</label>
+            <input type="date" value={beforeDate} onChange={e => setBeforeDate(e.target.value)}
+              className={inp} />
+          </div>
+          <label className="flex items-center gap-2 text-xs text-ink-dim cursor-pointer">
+            <input type="checkbox" checked={includeSub} onChange={e => setIncludeSub(e.target.checked)} />
+            Bao gồm các thư mục con
+          </label>
+          <div>
+            <label className="text-xs text-ink-dim mb-2 block">Thư mục cần lưu trữ</label>
+            <div className="border border-dark-border rounded-lg max-h-48 overflow-y-auto">
+              {flatFolders.filter(f => f.type !== 'system').map(f => (
+                <div key={f.id} className={`flex items-center gap-2 px-3 py-2 text-sm cursor-pointer hover:bg-dark-hover ${selectedFolders.includes(f.id) ? 'bg-pa10' : ''}`}
+                  onClick={() => toggleFolder(f.id)}>
+                  <input type="checkbox" checked={selectedFolders.includes(f.id)} onChange={() => toggleFolder(f.id)} className="mr-1" />
+                  <span style={{ paddingLeft: f.depth * 12 + 8 }}>{f.name}</span>
+                  <span className="ml-auto text-[11px] text-ink-mute">{f.total || 0}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+          {err && <div className="text-xs text-red-400">{err}</div>}
+          {result && (
+            <div className="text-xs text-green-400 bg-green-500/10 border border-green-500/25 rounded px-3 py-2">
+              Đã lên lịch lưu trữ {result.archived} thư
+              {result.error && <div className="text-red-400 mt-1">{result.error}</div>}
+            </div>
+          )}
+        </div>
+        <div className="flex justify-end gap-2 px-5 py-3.5 border-t border-dark-border shrink-0">
+          <button onClick={onClose} className="btn-secondary text-sm">Hủy</button>
+          <button onClick={handleArchive} disabled={busy} className="btn-primary text-sm flex items-center gap-1.5 disabled:opacity-50">
+            {busy ? <L2 size={14} className="animate-spin" /> : <Archive size={14} />} Lưu trữ
+          </button>
+        </div>
       </div>
-      {children}
     </div>
   )
-}
-
-function Segment({ options, value, onChange }) {
-  return (
-    <div className="flex bg-dark-bg border border-dark-border rounded-lg p-0.5">
-      {options.map(([v, label, Icon]) => (
-        <button key={String(v)} onClick={() => onChange(v)}
-          className={`px-3 py-1.5 rounded-md text-xs flex items-center gap-1.5 transition-colors ${
-            String(value) === String(v) ? 'bg-pa15 text-primary font-medium' : 'text-ink-dim hover:text-ink'}`}>
-          {Icon && <Icon size={12} />} {label}
-        </button>
-      ))}
-    </div>
-  )
-}
-
-function Toggle({ label, hint, checked, onChange }) {
-  return (
-    <div className="flex items-center justify-between gap-4">
-      <div>
-        <div className="text-sm text-ink">{label}</div>
-        {hint && <div className="text-[11px] text-ink-mute mt-0.5">{hint}</div>}
-      </div>
-      <button role="switch" aria-checked={checked} onClick={() => onChange(!checked)}
-        className={`w-10 h-[22px] rounded-full p-0.5 transition-colors ${checked ? 'bg-primary' : 'bg-dark-hover border border-dark-border'}`}>
-        <span className={`block w-[18px] h-[18px] rounded-full bg-white shadow transition-transform ${checked ? 'translate-x-4' : ''}`} />
-      </button>
-    </div>
-  )
-}
-
-function renderMsg(msg) {
-  if (!msg) return null
-  return <div className={`text-xs rounded px-3 py-2 border ${msg.ok ? 'text-green-400 bg-green-500/10 border-green-500/25' : 'text-red-300 bg-red-500/10 border-red-500/25'}`}>{msg.text}</div>
 }

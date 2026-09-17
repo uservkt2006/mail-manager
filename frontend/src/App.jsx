@@ -171,7 +171,7 @@ export default function App() {
           <StatusBar online={online} itemInfo="" hasAccount={hasAccount} realtime={rt} onRefresh={() => window.dispatchEvent(new Event('mm-synced'))} />
         </div>
       </div>
-      {showSettings && <SettingsModal user={user} section={settingsSection} onClose={() => setShowSettings(false)} onLogout={logout} />}
+      {showSettings && <SettingsModal user={user} section={settingsSection} onClose={() => setShowSettings(false)} onLogout={logout} folders={rulesFolders} />}
       {ruleModal && (
         <RuleModal
           folders={rulesFolders}

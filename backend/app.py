@@ -2100,6 +2100,11 @@ class FolderReorder(BaseModel):
 class FolderRename(BaseModel):
     name: str
 
+class BatchArchiveReq(BaseModel):
+    folder_ids: list[int]
+    before_date: str  # ISO date, e.g. "2024-01-01"
+    include_subfolders: bool = True
+
 
 @app.put("/api/folders/{fid}")
 async def api_folder_rename(fid: int, req: FolderRename, user: dict = Depends(current_user)):
@@ -2813,6 +2818,67 @@ async def api_archive(email_id: str, user: dict = Depends(current_user)):
                 logger.error(f"server archive {email_id}: {e}")
         threading.Thread(target=work, daemon=True).start()
     return {"success": True, "server": "queued"}
+
+
+@app.post("/api/archive/batch")
+async def api_archive_batch(req: BatchArchiveReq, user: dict = Depends(current_user)):
+    """Batch archive: export emails older than before_date from selected folders (and subfolders) to .eml,
+    then delete from Exchange. Returns count of archived emails."""
+    with get_db() as conn:
+        # validate folder_ids belong to user
+        rows = conn.execute(
+            "SELECT id, name, parent_id FROM folders WHERE user_id=? AND id IN (%s)" % ",".join("?" * len(req.folder_ids)),
+            [user["id"]] + req.folder_ids
+        ).fetchall()
+        if len(rows) != len(req.folder_ids):
+            raise HTTPException(400, "Một hoặc nhiều thư mục không tồn tại")
+        # build set of all folder IDs to archive (including subfolders)
+        folder_ids_set = set(req.folder_ids)
+        if req.include_subfolders:
+            while True:
+                new = conn.execute(
+                    "SELECT id FROM folders WHERE user_id=? AND parent_id IN (%s)" % ",".join("?" * len(folder_ids_set)),
+                    [user["id"]] + list(folder_ids_set)
+                ).fetchall()
+                new_ids = {r["id"] for r in new}
+                if not new_ids - folder_ids_set:
+                    break
+                folder_ids_set |= new_ids
+        # count matching emails
+        placeholders = ",".join("?" * len(folder_ids_set))
+        count = conn.execute(
+            f"SELECT COUNT(*) FROM messages WHERE user_id=? AND folder_id IN ({placeholders}) AND is_read=1 AND deleted_at IS NULL AND archived_local=0",
+            [user["id"]] + list(folder_ids_set)
+        ).fetchone()[0]
+        # get emails (already read) older than before_date
+        emails = conn.execute(
+            f"SELECT id, message_id FROM messages WHERE user_id=? AND folder_id IN ({placeholders}) AND date < ? AND is_read=1 AND deleted_at IS NULL AND archived_local=0",
+            [user["id"]] + list(folder_ids_set) + [req.before_date]
+        ).fetchall()
+    if not emails:
+        return {"success": True, "archived": 0, "error": None}
+    # archive each email in background thread
+    archived = 0
+    errors = []
+    def _batch_work():
+        nonlocal archived, errors
+        for e in emails:
+            try:
+                # write .eml
+                path = _write_eml(user["id"], e["id"])
+                with get_db() as conn2:
+                    conn2.execute("UPDATE messages SET archived_local=1, archive_path=? WHERE id=? AND user_id=?", (path, e["id"], user["id"]))
+                    _fts_ensure_row(conn2, e["id"])
+                    audit(conn2, user["id"], "mail.archive-batch", e["id"], req.before_date)
+                # delete from server
+                if e["message_id"]:
+                    ews_server_action(user["id"], e["message_id"], "delete")
+                archived += 1
+            except Exception as ex:
+                logger.error(f"batch archive {e['id']}: {ex}")
+                errors.append(str(ex))
+    threading.Thread(target=_batch_work, daemon=True).start()
+    return {"success": True, "archived": len(emails), "queued": True, "error": "; ".join(errors) if errors else None}
 
 
 @app.delete("/api/emails/{email_id}")

@@ -55,6 +55,7 @@ export const api = {
   unarchiveLocal: (id) => req('POST', `/emails/${id}/unarchive`),
   archiveBrowse: (path) => req('GET', '/archive/browse?path=' + encodeURIComponent(path || '')),
   archiveEml: (path) => req('GET', '/archive/eml?path=' + encodeURIComponent(path)),
+  archiveBatch: (data) => req('POST', '/archive/batch', data),
   mailboxUsage: () => req('GET', '/mailbox/usage'),
   autoreplyGet: () => req('GET', '/autoreply'),
   autoreplySet: (v) => req('PUT', '/autoreply', v),
