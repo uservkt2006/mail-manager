@@ -1,8 +1,10 @@
 {
   "name": "mail-manager",
-  "version": "1.0.0",
+  "version": "3.5.1",
   "description": "Mail Manager - Exchange email client for Ubuntu",
   "main": "electron/main.cjs",
+  "author": "Võ Khắc Tâm <vokhactam01@gmail.com>",
+  "homepage": "https://tmtool.click",
   "scripts": {
     "dev": "concurrently \"npm run dev:frontend\" \"npm run dev:electron\"",
     "dev:frontend": "vite",
@@ -47,7 +49,9 @@
           "arch": ["x64"]
         }
       ],
-      "category": "Office"
+      "category": "Office",
+      "maintainer": "Võ Khắc Tâm <vokhactam01@gmail.com>",
+      "vendor": "TM TOOL"
     }
   }
 }
