@@ -38,13 +38,26 @@
       "dist/**/*",
       "electron/**/*",
       "../build/icon.png",
-      "../build/icon.ico"
+      "../build/icon.ico",
+      "../backend/app.py",
+      "../backend/realtime.py",
+      "../backend/requirements.txt"
     ],
     "extraResources": [
+      {
+        "from": ".",
+        "to": ".",
+        "filter": ["dist/**/*", "electron/**/*"]
+      },
       {
         "from": "../build",
         "to": "build",
         "filter": ["**/*"]
+      },
+      {
+        "from": "../backend",
+        "to": "backend",
+        "filter": ["app.py", "realtime.py", "requirements.txt"]
       }
     ],
     "linux": {
