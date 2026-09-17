@@ -49,10 +49,10 @@ jobs:
           VERSION="${VERSION#v}"
           sed -i "s/\"version\": \"3.4.0\"/\"version\": \"$VERSION\"/" backend/app.py
       
-      - name: Build AppImage
+      - name: Build Linux packages (AppImage + .deb)
         run: |
           cd frontend
-          npx electron-builder --linux AppImage --publish never
+          npx electron-builder --linux AppImage deb --publish never
           cd ..
       
       - name: Generate checksums
