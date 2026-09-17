@@ -61,9 +61,6 @@
       "category": "Office",
       "maintainer": "Võ Khắc Tâm <vokhactam01@gmail.com>",
       "vendor": "TM TOOL",
-      "icon": [
-        "../build/icon.png"
-      ],
       "desktop": {
         "Name": "Mail Manager",
         "Comment": "Desktop email client",
