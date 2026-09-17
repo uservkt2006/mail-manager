@@ -59,7 +59,7 @@ jobs:
         run: |
           VERSION="${{ github.event.inputs.version || github.ref_name }}"
           VERSION="${VERSION#v}"
-          sha256sum frontend/dist/*.AppImage > checksums.txt
+          sha256sum frontend/dist/*.AppImage frontend/dist/*.deb > checksums.txt
       
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v1
@@ -67,6 +67,7 @@ jobs:
         with:
           files: |
             frontend/dist/*.AppImage
+            frontend/dist/*.deb
             checksums.txt
           draft: false
           prerelease: false
@@ -94,6 +95,7 @@ jobs:
           body_path: RELEASE_NOTES.md
           files: |
             frontend/dist/*.AppImage
+            frontend/dist/*.deb
             checksums.txt
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
