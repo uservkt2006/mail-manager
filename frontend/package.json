@@ -45,19 +45,9 @@
     ],
     "extraResources": [
       {
-        "from": ".",
-        "to": ".",
-        "filter": ["dist/**/*", "electron/**/*"]
-      },
-      {
         "from": "../build",
         "to": "build",
         "filter": ["**/*"]
-      },
-      {
-        "from": "../backend",
-        "to": "backend",
-        "filter": ["app.py", "realtime.py", "requirements.txt"]
       }
     ],
     "linux": {
