@@ -12,6 +12,7 @@ import TasksView from './components/TasksView'
 import RulesView from './components/RulesView'
 import RuleModal from './components/RuleModal'
 import SettingsModal from './components/SettingsModal'
+import UpdateDialog from './components/UpdateDialog'
 
 export default function App() {
   const [user, setUser] = useState(null)
@@ -34,6 +35,7 @@ export default function App() {
   const [rulesFolders, setRulesFolders] = useState([])
   const [ruleModal, setRuleModal] = useState(null)   // {mode:'new'|'edit', rule?}
   const [updateInfo, setUpdateInfo] = useState(null)   // {has_update, latest, current, download_url}
+  const [showUpdateDialog, setShowUpdateDialog] = useState(false)
 
   // folder tree is needed by both MailView and the rules editor
   const refreshFolders = useCallback(() => {
@@ -144,7 +146,12 @@ export default function App() {
   // Check for updates when user logs in
   useEffect(() => {
     if (!user) return
-    api.updateCheck().then(d => setUpdateInfo(d)).catch(() => {})
+    api.updateCheck().then(d => {
+      setUpdateInfo(d)
+      if (d.has_update) {
+        setShowUpdateDialog(true)
+      }
+    }).catch(() => {})
   }, [user])
 
   if (booting) {
@@ -183,6 +190,13 @@ export default function App() {
         </div>
       </div>
       {showSettings && <SettingsModal user={user} section={settingsSection} onClose={() => setShowSettings(false)} onLogout={logout} folders={rulesFolders} />}
+      {showUpdateDialog && updateInfo && (
+        <UpdateDialog
+          updateInfo={updateInfo}
+          onInstall={(url) => { window.open(url, '_blank'); setShowUpdateDialog(false) }}
+          onDismiss={() => setShowUpdateDialog(false)}
+        />
+      )}
       {ruleModal && (
         <RuleModal
           folders={rulesFolders}
