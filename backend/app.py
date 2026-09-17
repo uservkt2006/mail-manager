@@ -1527,7 +1527,7 @@ def _search_folder_ids(user_id):
 # ─── auth ─────────────────────────────────────────────────────────────
 @app.get("/api/health")
 async def health():
-    return {"status": "ok", "service": "mail-manager", "version": "3.5.8"}
+    return {"status": "ok", "service": "mail-manager", "version": "3.6.0"}
 
 
 @app.get("/api/auth/status")
@@ -3351,7 +3351,7 @@ async def api_account_add(req: AccountConfig, user: dict = Depends(current_user)
 
 
 # ─── auto-update ──────────────────────────────────────────────────────────
-def _github_release(client_version="3.5.8"):
+def _github_release(client_version="3.6.0"):
     """Check GitHub releases for newer version. Returns dict with update info."""
     import urllib.request
     import json as _json
@@ -3388,13 +3388,13 @@ def _github_release(client_version="3.5.8"):
 @app.get("/api/update/check")
 async def api_update_check():
     """Check if a newer version is available on GitHub."""
-    return _github_release("3.5.8")
+    return _github_release("3.6.0")
 
 
 @app.get("/api/update/download")
 async def api_update_download():
     """Download the latest update file."""
-    info = _github_release("3.5.8")
+    info = _github_release("3.6.0")
     if not info.get("download_url"):
         raise HTTPException(404, "Không tìm thấy file cập nhật")
     try:

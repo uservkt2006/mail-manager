@@ -1,6 +1,6 @@
 {
   "name": "mail-manager",
-  "version": "3.5.1",
+  "version": "3.6.0",
   "description": "Mail Manager - Exchange email client for Ubuntu",
   "main": "electron/main.cjs",
   "author": "Võ Khắc Tâm <vokhactam01@gmail.com>",
@@ -36,7 +36,16 @@
     "productName": "Mail Manager",
     "files": [
       "dist/**/*",
-      "electron/**/*"
+      "electron/**/*",
+      "../build/icon.png",
+      "../build/icon.ico"
+    ],
+    "extraResources": [
+      {
+        "from": "../build",
+        "to": "build",
+        "filter": ["**/*"]
+      }
     ],
     "linux": {
       "target": [
@@ -51,7 +60,34 @@
       ],
       "category": "Office",
       "maintainer": "Võ Khắc Tâm <vokhactam01@gmail.com>",
-      "vendor": "TM TOOL"
+      "vendor": "TM TOOL",
+      "icon": [
+        "../build/icon.png"
+      ],
+      "desktop": {
+        "Name": "Mail Manager",
+        "Comment": "Desktop email client",
+        "Categories": "Office;Network;Email;",
+        "MimeType": "x-scheme-handler/mailto;",
+        "StartupWMClass": "Mail Manager"
+      }
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        }
+      ],
+      "icon": "../build/icon.ico"
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Mail Manager"
     }
   }
 }
