@@ -45,10 +45,10 @@ jobs:
       
       - name: Update version in backend
         run: |
-          VERSION="${{ github.event.inputs.version || github.ref_name }}"
-          VERSION="${VERSION#v}"
-          sed -i "s/\"version\": \"3.4.0\"/\"version\": \"$VERSION\"/" backend/app.py
-          sed -i "s/\"version\": \"1.0.0\"/\"version\": \"$VERSION\"/" frontend/package.json
+          $version = "${{ github.event.inputs.version || github.ref_name }}"
+          $version = $version -replace '^v', ''
+          (Get-Content backend/app.py) -replace '3.4.0', $version | Set-Content backend/app.py
+          (Get-Content frontend/package.json) -replace '1.0.0', $version | Set-Content frontend/package.json
       
       - name: Build Linux packages (AppImage + .deb)
         run: |

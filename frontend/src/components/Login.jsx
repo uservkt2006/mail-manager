@@ -54,10 +54,6 @@ export default function Login({ onDone }) {
           {busy ? <Loader2 size={16} className="animate-spin" /> : null}
           Đăng nhập
         </button>
-        <p className="text-[11px] text-ink-mute mt-4 leading-relaxed">
-          Demo: <code className="text-ink-dim">demo@fpt.com</code> hoặc <code className="text-ink-dim">nhanvien@fpt.com</code>
-          <span className="block mt-0.5">Dữ liệu của mỗi người dùng được tách biệt hoàn toàn.</span>
-        </p>
       </form>
     </div>
   )
