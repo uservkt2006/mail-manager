@@ -52,7 +52,9 @@ jobs:
         run: |
           rm -rf build/frontend-dist
           mkdir -p build
-          cp -r frontend/dist build/frontend-dist
+          cp -rv frontend/dist build/frontend-dist 2>&1
+          echo "✓ Copied $(find build/frontend-dist -type f | wc -l) files to build/frontend-dist"
+          ls build/frontend-dist/
           # Empty frontend/dist so electron-builder doesn't see it as source
           rm -rf frontend/dist
           mkdir -p frontend/dist
