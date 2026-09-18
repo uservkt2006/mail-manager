@@ -70,7 +70,32 @@ function resolveFrontendDist() {
   return null
 }
 
-function startBackend() {
+async function killOldBackend() {
+  // Test if port 18685 is in use; if so, kill any process holding it.
+  const net = require('net')
+  const { execSync } = require('child_process')
+  return new Promise(resolve => {
+    const tester = net.createServer()
+    let needKill = false
+    tester.once('error', err => {
+      if (err.code === 'EADDRINUSE') needKill = true
+    })
+    try { tester.listen(18685, '127.0.0.1') } catch { resolve(); return }
+    setTimeout(() => {
+      try { tester.close() } catch {}
+      if (needKill) {
+        console.log('Port 18685 already in use — killing old backend')
+        try { execSync('pkill -9 -f "backend/app.py"', { stdio: 'ignore' }) } catch {}
+        // Give the kernel ~500ms to release the socket
+        setTimeout(resolve, 500)
+      } else {
+        resolve()
+      }
+    }, 100)
+  })
+}
+
+async function startBackend() {
   const pythonPath = resolvePython()
   const backendScript = resolveBackendScript()
   if (!backendScript) {
@@ -78,21 +103,7 @@ function startBackend() {
     return null
   }
 
-  // Kill any old backend still listening on port 18685 (e.g. previous app instance
-  // that didn't clean up properly). This prevents the proxy from connecting to a
-  // stale backend with old version metadata.
-  try {
-    const net = require('net')
-    const tester = net.createServer()
-    tester.once('error', err => {
-      if (err.code === 'EADDRINUSE') {
-        console.log('Port 18685 already in use — killing old backend')
-        try { require('child_process').execSync('pkill -9 -f "backend/app.py" || true') } catch {}
-      }
-    })
-    tester.listen(18685, '127.0.0.1')
-    tester.close()
-  } catch {}
+  await killOldBackend()
 
   console.log('Starting backend:', pythonPath, backendScript)
   backendProcess = spawn(pythonPath, [backendScript], {
@@ -212,7 +223,7 @@ async function createWindow() {
       mainWindow.show()
     }, 2500)
   } else {
-    startBackend()
+    await startBackend()
     startProxy(backendPort, frontendPort)
     try {
       await waitForBackend(backendPort)
