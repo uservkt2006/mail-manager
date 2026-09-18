@@ -55,6 +55,7 @@ function resolveBackendScript() {
 
 function resolveFrontendDist() {
   const candidates = [
+    path.join(process.resourcesPath || '', 'frontend'),
     path.join(process.resourcesPath || '', 'dist'),
     path.join(__dirname, '..', '..', 'dist'),
     path.join(__dirname, '..', 'dist'),

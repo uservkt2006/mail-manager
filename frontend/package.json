@@ -42,7 +42,7 @@
     "extraResources": [
       {
         "from": "../build/frontend-dist",
-        "to": "dist",
+        "to": "frontend",
         "filter": ["**/*"]
       },
       {
