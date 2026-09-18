@@ -77,6 +77,23 @@ function startBackend() {
     console.error('Backend script not found')
     return null
   }
+
+  // Kill any old backend still listening on port 18685 (e.g. previous app instance
+  // that didn't clean up properly). This prevents the proxy from connecting to a
+  // stale backend with old version metadata.
+  try {
+    const net = require('net')
+    const tester = net.createServer()
+    tester.once('error', err => {
+      if (err.code === 'EADDRINUSE') {
+        console.log('Port 18685 already in use — killing old backend')
+        try { require('child_process').execSync('pkill -9 -f "backend/app.py" || true') } catch {}
+      }
+    })
+    tester.listen(18685, '127.0.0.1')
+    tester.close()
+  } catch {}
+
   console.log('Starting backend:', pythonPath, backendScript)
   backendProcess = spawn(pythonPath, [backendScript], {
     cwd: path.dirname(backendScript),
