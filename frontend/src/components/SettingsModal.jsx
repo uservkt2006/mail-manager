@@ -76,6 +76,15 @@ function Toggle({ label, hint, checked, onChange }) {
   )
 }
 
+function renderMsg(m) {
+  if (!m) return null
+  return (
+    <div className={`text-xs px-3 py-2 rounded ${m.ok ? 'text-emerald-300 bg-emerald-500/10' : 'text-red-300 bg-red-500/10'}`}>
+      {m.text}
+    </div>
+  )
+}
+
 function AutoReplySection({ onMsg }) {
   const [oof, setOof] = useState(null)
   const [busy, setBusy] = useState(false)
