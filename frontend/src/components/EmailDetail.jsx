@@ -29,15 +29,20 @@ export default function EmailDetail({ email, folders, onArchive, onDelete, onSta
     if (email?.id) {
       setFull(null)
       let alive = true
-      const load = (tries) => {
+      let tries = 10
+      const load = () => {
         api.email(email.id).then(d => {
           if (!alive) return
           setFull(d)
           onRefresh?.()
-          if (d.hydrating && tries > 0) setTimeout(() => load(tries - 1), 1200)
+          if (d.hydrating && tries > 0) {
+            // Poll faster at first, then slow down
+            const delay = tries > 6 ? 600 : 1500
+            setTimeout(() => { tries--; load() }, delay)
+          }
         }).catch(() => { if (alive) setFull(null) })
       }
-      load(15)   // keep polling up to ~18s while the hydrator fetches the body
+      load()
       return () => { alive = false }
     }
   }, [email?.id])

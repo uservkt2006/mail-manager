@@ -320,45 +320,83 @@ ipcMain.on('notify', (_e, { title, body }) => {
   }
 })
 
-// Auto-update: download .deb to a temp dir, then run pkexec dpkg -i
-// Returns { ok, error, debPath } to the renderer
+// Auto-update: download .deb to a temp dir, then install it via apt/dpkg.
+// Kills current process before installing so dpkg can replace the running binary.
+// Returns { ok, error, debPath } to the renderer.
 ipcMain.handle('install-update', async (_e, { downloadUrl, version }) => {
   try {
     const os = require('os')
-    const { spawn, exec } = require('child_process')
+    const { spawn, exec, execSync } = require('child_process')
     const tmpDir = path.join(os.tmpdir(), 'mail-manager-update')
     fs.mkdirSync(tmpDir, { recursive: true })
 
     // Detect platform-specific asset name
-    const arch = process.arch
     let assetName = downloadUrl.split('/').pop()
     if (!assetName || !assetName.endsWith('.deb')) {
       assetName = `mail-manager_${version}_amd64.deb`
     }
     const debPath = path.join(tmpDir, assetName)
 
-    // Download via curl (more reliable than Node fetch for large files)
+    // Download via curl
     await new Promise((resolve, reject) => {
       const proc = spawn('curl', ['-fL', '-o', debPath, downloadUrl], { stdio: 'ignore' })
       proc.on('close', code => code === 0 ? resolve() : reject(new Error(`curl exit ${code}`)))
       proc.on('error', reject)
     })
 
-    // Verify file exists and has size
+    // Verify file
     const sz = fs.statSync(debPath).size
     if (sz < 1024 * 1024) {
       throw new Error(`Downloaded file too small (${sz} bytes), likely an error page`)
     }
 
-    // Try pkexec first (graphical sudo), fall back to plain sudo
-    const helper = ['pkexec', 'dpkg', '-i', debPath]
-    const child = spawn(helper[0], helper.slice(1), {
+    // Make file readable by root
+    try { execSync(`chmod 644 "${debPath}"`, { stdio: 'ignore' }) } catch {}
+
+    // Schedule the install to run AFTER we exit (so dpkg can replace this binary).
+    // Strategy: write a shell script to /tmp that waits for our pid to die,
+    // then runs pkexec dpkg -i. Then quit the app.
+    const scriptPath = '/tmp/mail-manager-install.sh'
+    const ourPid = process.pid
+    const installCmd = `dpkg -i "${debPath}" || apt-get install -f -y`
+    const script = `#!/bin/bash
+# Wait for old mail-manager to exit
+for i in $(seq 1 60); do
+  if ! kill -0 ${ourPid} 2>/dev/null; then break; fi
+  sleep 0.5
+done
+# Use pkexec to prompt for password graphically; fall back to sudo if pkexec not available
+if command -v pkexec >/dev/null 2>&1; then
+  pkexec bash -c '${installCmd.replace(/'/g, "'\\''")}'
+else
+  sudo bash -c '${installCmd.replace(/'/g, "'\\''")}'
+fi
+RC=$?
+# Show result in terminal via notify if possible
+if [ $RC -eq 0 ]; then
+  notify-send "Mail Manager" "Cập nhật v${version} thành công" 2>/dev/null || true
+else
+  notify-send "Mail Manager" "Cập nhật thất bại (code $RC)" 2>/dev/null || true
+fi
+exit $RC
+`
+    fs.writeFileSync(scriptPath, script, { mode: 0o755 })
+
+    // Spawn the script detached so it runs after we quit
+    const child = spawn('bash', [scriptPath], {
       detached: true,
-      stdio: 'ignore'
+      stdio: 'ignore',
+      env: { ...process.env, DISPLAY: process.env.DISPLAY || ':0' }
     })
     child.unref()
 
-    return { ok: true, debPath, size: sz }
+    // Give pkexec a moment to start the prompt, then quit the app
+    setTimeout(() => {
+      console.log('Quitting for update...')
+      app.quit()
+    }, 800)
+
+    return { ok: true, debPath, size: sz, willRestart: true }
   } catch (e) {
     return { ok: false, error: e.message || String(e) }
   }
