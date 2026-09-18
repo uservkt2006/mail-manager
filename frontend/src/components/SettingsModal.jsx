@@ -27,6 +27,36 @@ const SHORTCUTS = [
 ]
 const isElectron = typeof window !== 'undefined' && !!window.electron
 
+function Row({ label, hint, children }) {
+  return (
+    <div className="space-y-1.5">
+      <div className="flex items-baseline justify-between">
+        <label className="text-sm text-ink-strong">{label}</label>
+        {hint && <span className="text-[11px] text-ink-mute">{hint}</span>}
+      </div>
+      {children}
+    </div>
+  )
+}
+
+function Segment({ options, value, onChange }) {
+  return (
+    <div className="inline-flex items-center bg-dark-bg border border-dark-border rounded-md p-0.5">
+      {options.map(([v, label, Icon]) => (
+        <button key={v} type="button" onClick={() => onChange(v)}
+          className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-xs transition-colors ${
+            value === v ? 'bg-primary text-white' : 'text-ink-dim hover:bg-dark-hover'
+          }`}>
+          {Icon && <Icon size={12} />}
+          {label}
+        </button>
+      ))}
+    </div>
+  )
+}
+
+const inp = 'w-full bg-dark-bg border border-dark-border rounded-md px-3 py-2 text-sm text-ink focus:outline-none focus:border-primary'
+
 function AutoReplySection({ onMsg }) {
   const [oof, setOof] = useState(null)
   const [busy, setBusy] = useState(false)
