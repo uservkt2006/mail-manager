@@ -33,7 +33,7 @@
   },
   "build": {
     "appId": "com.tmtool.mailmanager",
-    "productName": "Mail Manager",
+    "productName": "mail-manager",
     "executableName": "mail-manager",
     "files": [
       "dist/**/*",
@@ -84,6 +84,7 @@
       "category": "Office",
       "maintainer": "Võ Khắc Tâm <vokhactam01@gmail.com>",
       "vendor": "TM TOOL",
+      "icon": "../build/icons",
       "desktop": {
         "Name": "Mail Manager",
         "Comment": "Desktop email client",
@@ -91,6 +92,10 @@
         "MimeType": "x-scheme-handler/mailto;",
         "StartupWMClass": "Mail Manager"
       }
+    },
+    "deb": {
+      "packageName": "mail-manager",
+      "fpm": ["--deb-no-default-config-files"]
     },
     "win": {
       "target": [
