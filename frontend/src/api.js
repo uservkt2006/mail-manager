@@ -30,6 +30,7 @@ async function req(method, path, body) {
 
 export const api = {
   authStatus: () => req('GET', '/auth/status'),
+  health: () => req('GET', '/health'),
   setup: (p) => req('POST', '/setup', p),
   verifyAccount: (p) => req('POST', '/accounts/verify', p),
   syncNow: () => req('POST', '/sync'),

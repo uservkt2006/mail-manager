@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import { X, Plug, LogOut, ShieldCheck, Loader2, UserPlus, Trash2, SlidersHorizontal,
-  RefreshCw, PenLine, Keyboard, Info, Sun, Moon, MonitorSmartphone, LayoutList, Mail, Archive, FolderOpen, Download, FileText, Reply, HardDrive, AlertCircle, Loader2 as L2 } from 'lucide-react'
+  RefreshCw, PenLine, Keyboard, Info, Sun, Moon, MonitorSmartphone, LayoutList, Mail, Archive, FolderOpen, Download, FileText, Reply, HardDrive, AlertCircle, Loader2 as L2, Heart } from 'lucide-react'
 import { api, setToken } from '../api'
 import { getTheme, setTheme, getDensity, setDensity, getReadingPane, setReadingPane,
   getComposeFont, setComposeFont, getComposeSize, setComposeSize } from '../theme'
@@ -241,11 +241,13 @@ export default function SettingsModal({ user, section = 'general', onClose, onLo
   const [themePref, setThemePref] = useState(getTheme())
   const [density, setDensityState] = useState(getDensity())
   const [pane, setPaneState] = useState(getReadingPane())
+  const [appVersion, setAppVersion] = useState('')
 
   const load = useCallback(() => {
     api.settings().then(d => setSettings(d.settings)).catch(() => {})
     api.accounts().then(d => setAccounts(d.accounts)).catch(() => {})
     api.audit().then(d => setAudit(d.events)).catch(() => {})
+    api.health().then(d => setAppVersion(d.version || '')).catch(() => {})
   }, [])
   useEffect(() => { load() }, [load])
 
@@ -495,19 +497,39 @@ export default function SettingsModal({ user, section = 'general', onClose, onLo
             )}
 
             {sec === 'about' && (
-              <div className="space-y-4">
+              <div className="space-y-5">
                 <div className="flex items-center gap-3">
                   <div className="w-11 h-11 rounded-xl bg-gradient-to-br from-primary to-blue-600 flex items-center justify-center"><Mail size={20} className="text-white" /></div>
                   <div>
-                    <div className="text-ink-strong font-semibold">Mail Manager</div>
-                    <div className="text-xs text-ink-mute">v3.2 · TM TOOL — Võ Khắc Tâm</div>
+                    <div className="text-ink-strong font-semibold">TM Mail Manager</div>
+                    <div className="text-xs text-ink-mute">Phiên bản <span className="text-ink-dim font-medium">v{appVersion || '…'}</span></div>
                   </div>
                 </div>
                 <p className="text-sm text-ink-dim leading-relaxed">
                   Email client cho Exchange/FPT: đọc-gửi, lịch, danh bạ, công việc.
                   {isElectron ? ' Đang chạy ở chế độ desktop (Electron).' : ' Đang chạy trong trình duyệt.'}
                 </p>
-                <div className="flex items-center gap-3 pt-2">
+
+                {/* Support / Ủng hộ tác giả */}
+                <div className="bg-gradient-to-br from-pa10 to-blue-500/5 border border-primary/20 rounded-lg p-4 space-y-2">
+                  <div className="flex items-center gap-2 text-sm font-semibold text-ink-strong">
+                    <Heart size={14} className="text-red-400 fill-red-400" />
+                    Ủng hộ tác giả
+                  </div>
+                  <p className="text-xs text-ink-dim leading-relaxed">
+                    Nếu app hữu ích với bạn, hãy ủng hộ tác giả để có thêm động lực phát triển nhé 💛
+                  </p>
+                  <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs pt-1">
+                    <div className="text-ink-mute">Ngân hàng</div>
+                    <div className="text-ink-strong font-medium">MB Bank</div>
+                    <div className="text-ink-mute">Số tài khoản</div>
+                    <div className="text-ink-strong font-mono font-medium tracking-wide">666 799 979</div>
+                    <div className="text-ink-mute">Chủ tài khoản</div>
+                    <div className="text-ink-strong">Võ Khắc Tâm</div>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-3 pt-2 border-t border-dark-border">
                   <div className="w-9 h-9 rounded-full bg-pa20 text-primary flex items-center justify-center text-sm font-semibold">
                     {(user.display_name || user.email)[0].toUpperCase()}
                   </div>

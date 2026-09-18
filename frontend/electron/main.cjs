@@ -257,14 +257,14 @@ function installLinuxDesktopEntry() {
       `[Desktop Entry]
 Version=1.0
 Type=Application
-Name=Mail Manager
+Name=TM Mail Manager
 Comment=Desktop email client
 Exec=${exePath} %u
 Icon=${iconRef}
 Terminal=false
 Categories=Office;Network;Email;
 StartupNotify=true
-StartupWMClass=Mail Manager
+StartupWMClass=TM Mail Manager
 `, { mode: 0o644 })
   } catch (e) {
     console.error('Failed to install .desktop entry:', e)
@@ -374,9 +374,9 @@ fi
 RC=$?
 # Show result in terminal via notify if possible
 if [ $RC -eq 0 ]; then
-  notify-send "Mail Manager" "Cập nhật v${version} thành công" 2>/dev/null || true
+  notify-send "TM Mail Manager" "Cập nhật v${version} thành công" 2>/dev/null || true
 else
-  notify-send "Mail Manager" "Cập nhật thất bại (code $RC)" 2>/dev/null || true
+  notify-send "TM Mail Manager" "Cập nhật thất bại (code $RC)" 2>/dev/null || true
 fi
 exit $RC
 `

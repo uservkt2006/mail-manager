@@ -1,7 +1,7 @@
 {
   "name": "mail-manager",
-  "version": "3.6.22",
-  "description": "Mail Manager - Exchange email client for Ubuntu",
+  "version": "3.7.0",
+  "description": "TM Mail Manager - Exchange email client for Ubuntu",
   "main": "electron/main.cjs",
   "author": "Võ Khắc Tâm <vokhactam01@gmail.com>",
   "homepage": "https://tmtool.click",
@@ -90,11 +90,11 @@
       "vendor": "TM TOOL",
       "icon": "../build/icons",
       "desktop": {
-        "Name": "Mail Manager",
+        "Name": "TM Mail Manager",
         "Comment": "Desktop email client",
         "Categories": "Office;Network;Email;",
         "MimeType": "x-scheme-handler/mailto;",
-        "StartupWMClass": "Mail Manager"
+        "StartupWMClass": "TM Mail Manager"
       }
     },
     "deb": {
@@ -116,7 +116,7 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "Mail Manager"
+      "shortcutName": "TM Mail Manager"
     }
   }
 }

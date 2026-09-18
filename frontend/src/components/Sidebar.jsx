@@ -11,7 +11,7 @@ export default function Sidebar({ folders, activeFolder, onFolderClick, onCompos
             <Inbox size={16} className="text-ink-strong" />
           </div>
           <div>
-            <h1 className="text-base font-semibold text-ink-strong tracking-tight">Mail Manager</h1>
+            <h1 className="text-base font-semibold text-ink-strong tracking-tight">TM Mail Manager</h1>
             <p className="text-xs text-ink-dim">v2.0 · FPT Exchange</p>
           </div>
         </div>

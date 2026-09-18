@@ -68,7 +68,7 @@ export default function SetupWizard({ onDone }) {
             <Mail size={22} className="text-ink-strong" />
           </div>
           <div>
-            <h1 className="text-lg font-semibold text-ink-strong leading-tight">Mail Manager</h1>
+            <h1 className="text-lg font-semibold text-ink-strong leading-tight">TM Mail Manager</h1>
             <p className="text-xs text-ink-dim">Thiết lập ban đầu · Exchange FPT</p>
           </div>
         </div>

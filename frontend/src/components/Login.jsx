@@ -30,7 +30,7 @@ export default function Login({ onDone }) {
             <Mail size={20} className="text-ink-strong" />
           </div>
           <div>
-            <h1 className="font-semibold text-ink-strong">Mail Manager</h1>
+            <h1 className="font-semibold text-ink-strong">TM Mail Manager</h1>
             <p className="text-xs text-ink-dim">Đăng nhập để tiếp tục</p>
           </div>
         </div>

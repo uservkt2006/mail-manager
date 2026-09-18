@@ -1,4 +1,4 @@
-"""Mail Manager v3.0 — multi-user, spec-aligned schema.
+"""TM Mail Manager v3.7.0 — multi-user, spec-aligned schema.
 
 Entities: User, Session, MailAccount, Folder(tree), Thread, Message,
 Attachment, Contact, Task, CalendarEvent, AuditEvent.
@@ -28,7 +28,7 @@ logging.basicConfig(level=logging.INFO)
 logging.getLogger("exchangelib").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="Mail Manager", version="3.6.22")
+app = FastAPI(title="TM Mail Manager", version="3.7.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 # SQLite database path (MM_DB_PATH lets tests use an isolated DB)
@@ -603,11 +603,11 @@ def seed(conn):
         ensure_thread(conn, demo, m["thread_id"], m["subject"], None, m["date"], m["is_read"] == 0)
         insert_message(conn, demo, m, atts.get(m["id"]))
     for uid in (demo, nv):
-        ensure_thread(conn, uid, f"th-sent-{uid}", "Gửi từ Mail Manager", None, t(100), 0)
+        ensure_thread(conn, uid, f"th-sent-{uid}", "Gửi từ TM Mail Manager", None, t(100), 0)
         conn.execute("""INSERT INTO messages (id,user_id,message_id,thread_id,folder_id,"from","to",subject,date,preview,body,is_read,starred,categories)
             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (f"sent-{uid}", uid, "<s1>", f"th-sent-{uid}", folders[(uid, "sent")], "me", "other@x.com",
-             "Gửi từ Mail Manager", t(100), "Test đã gửi", "Nội dung đã gửi", 1, 0, "[]"))
+             "Gửi từ TM Mail Manager", t(100), "Test đã gửi", "Nội dung đã gửi", 1, 0, "[]"))
 
     for name, em, job, comp in [("John Doe", "john.doe@fpt.com", "Trưởng nhóm", "FPT"),
                                 ("Alice Smith", "alice.smith@fpt.com", "PM", "FPT"),
