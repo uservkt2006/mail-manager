@@ -55,10 +55,17 @@ function resolveBackendScript() {
 
 function resolveFrontendDist() {
   const candidates = [
+    path.join(process.resourcesPath || '', 'dist'),
+    path.join(__dirname, '..', '..', 'dist'),
+    path.join(__dirname, '..', 'dist'),
     path.join(process.resourcesPath || '', 'app', 'dist'),
     path.join(appRoot(), 'dist'),
   ]
-  for (const p of candidates) if (fs.existsSync(p)) return p
+  for (const p of candidates) {
+    try {
+      if (fs.existsSync(p) && fs.statSync(p).isDirectory()) return p
+    } catch {}
+  }
   return null
 }
 

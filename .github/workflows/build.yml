@@ -40,10 +40,26 @@ jobs:
       - name: Install frontend dependencies
         run: cd frontend && npm ci
 
+      - name: Bundle backend scripts
+        run: bash scripts/bundle-backend.sh
+
       - name: Build frontend
         run: |
           rm -rf frontend/dist frontend/_backend
           cd frontend && npm run build
+
+      - name: Copy dist outside frontend/ to avoid recursive copy
+        run: |
+          rm -rf build/frontend-dist
+          mkdir -p build
+          cp -r frontend/dist build/frontend-dist
+          # Empty frontend/dist so electron-builder doesn't see it as source
+          rm -rf frontend/dist
+          mkdir -p frontend/dist
+          touch frontend/dist/.gitkeep
+
+      - name: Bundle Python interpreter (Linux venv)
+        run: python3 scripts/bundle-python.py
 
       - name: Update version in backend
         run: |
@@ -55,11 +71,14 @@ jobs:
           echo "--- After update ---"
           grep -E "3\.[0-9]+\.[0-9]+" backend/app.py | head -10
 
-      - name: Bundle backend scripts
+      - name: Bundle backend scripts (re-run with updated version)
         run: bash scripts/bundle-backend.sh
 
-      - name: Bundle Python interpreter (Linux venv)
-        run: python3 scripts/bundle-python.py
+      - name: Copy dist again with updated version
+        run: |
+          rm -rf build/frontend-dist
+          mkdir -p build
+          cp -r frontend/dist build/frontend-dist
 
       - name: Update version in backend (run again after bundling)
         run: |

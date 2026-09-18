@@ -36,11 +36,15 @@
     "productName": "mail-manager",
     "executableName": "mail-manager",
     "files": [
-      "dist/**/*",
       "electron/**/*",
       "_backend/**/*"
     ],
     "extraResources": [
+      {
+        "from": "../build/frontend-dist",
+        "to": "dist",
+        "filter": ["**/*"]
+      },
       {
         "from": "../build/icons",
         "to": "icons",
