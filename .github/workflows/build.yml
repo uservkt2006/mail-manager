@@ -78,9 +78,19 @@ jobs:
 
       - name: Copy dist again with updated version
         run: |
+          # Re-copy build/frontend-dist (which has our built frontend) outside of frontend/
+          # to avoid electron-builder recursive copy into app.asar
           rm -rf build/frontend-dist
           mkdir -p build
-          cp -r frontend/dist build/frontend-dist
+          # Now build the frontend again with updated version (re-build)
+          cd frontend && npm run build && cd ..
+          cp -rv frontend/dist build/frontend-dist 2>&1
+          # Empty frontend/dist so electron-builder doesn't see it as source
+          rm -rf frontend/dist
+          mkdir -p frontend/dist
+          touch frontend/dist/.gitkeep
+          echo "✓ After re-copy: $(find build/frontend-dist -type f | wc -l) files"
+          ls build/frontend-dist/
 
       - name: Update version in backend (run again after bundling)
         run: |
