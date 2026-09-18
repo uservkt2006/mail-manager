@@ -57,6 +57,25 @@ function Segment({ options, value, onChange }) {
 
 const inp = 'w-full bg-dark-bg border border-dark-border rounded-md px-3 py-2 text-sm text-ink focus:outline-none focus:border-primary'
 
+function Toggle({ label, hint, checked, onChange }) {
+  return (
+    <label className="flex items-start gap-3 cursor-pointer">
+      <button type="button" onClick={() => onChange(!checked)}
+        className={`mt-0.5 relative inline-flex h-5 w-9 shrink-0 rounded-full transition-colors ${
+          checked ? 'bg-primary' : 'bg-dark-hover'
+        }`}>
+        <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform mt-0.5 ${
+          checked ? 'translate-x-[18px]' : 'translate-x-0.5'
+        }`} />
+      </button>
+      <div className="flex-1">
+        <div className="text-sm text-ink-strong">{label}</div>
+        {hint && <div className="text-[11px] text-ink-mute mt-0.5">{hint}</div>}
+      </div>
+    </label>
+  )
+}
+
 function AutoReplySection({ onMsg }) {
   const [oof, setOof] = useState(null)
   const [busy, setBusy] = useState(false)

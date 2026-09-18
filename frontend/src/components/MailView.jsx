@@ -276,7 +276,7 @@ export default function MailView({ user, catMeta: catMetaProp, onOpenSettings })
               onEmailSelect={actSelect} onEmailOpen={(e) => pane === 'off' && setReadModal(true)}
               onArchive={actArchive} onDelete={actDelete} onStar={actStar} onFlag={actFlag}
               onMove={actMove} onMarkRead={actRead} onCategory={actCats}
-              onContext={(email, x, y) => setCtx({ email, x, y })}
+              onContext={async (email, x, y) => { await actSelect(email); setCtx({ email, x, y }) }}
               catMeta={catMeta} density={density}
               onRefresh={() => { loadEmails(); loadTree() }}
               conversationView={conversation} onToggleConversation={() => setConversation(!conversation)}
