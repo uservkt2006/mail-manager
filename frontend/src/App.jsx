@@ -158,9 +158,9 @@ export default function App() {
     return <div className="h-screen flex items-center justify-center bg-dark-bg text-ink-mute text-sm">Đang tải…</div>
   }
   if (!user) {
-    return setupNeeded
-      ? <SetupWizard onDone={(u) => { setUser(u); setHasAccount(true) }} />
-      : <Login onDone={(u) => setUser(u)} />
+    // Skip Login — go straight to SetupWizard. It collects Exchange credentials
+    // and creates the user account. Login component is no longer used.
+    return <SetupWizard onDone={(u) => { setUser(u); setHasAccount(true) }} />
   }
 
   const logout = async () => {
