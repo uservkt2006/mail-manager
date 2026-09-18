@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react'
-import { Archive, Trash2, Star, MessageSquare, RefreshCw, Search, Flag, Paperclip, Mail, MailOpen, Tag, Share2, Pin, ChevronDown, ChevronRight } from 'lucide-react'
+import { Archive, Trash2, Star, MessageSquare, RefreshCw, Search, Flag, Paperclip, Mail, MailOpen, Tag, Share2, Pin, ChevronDown, ChevronRight, CheckCheck } from 'lucide-react'
 import { format, isToday, isYesterday, isThisWeek } from 'date-fns'
 import { vi } from 'date-fns/locale'
 
@@ -102,7 +102,7 @@ function Row({ it, email, selectedEmailId, onEmailSelect, onEmailOpen, onContext
 export default function EmailList({
   emails, activeFolder, selectedEmailId, onEmailSelect, onEmailOpen, onArchive, onDelete, onStar,
   onFlag, onMove, onMarkRead, onCategory, onContext, catMeta,
-  onRefresh, conversationView, onToggleConversation, searchTerm, onSearchChange,
+  onRefresh, onMarkAllRead, conversationView, onToggleConversation, searchTerm, onSearchChange,
   selectedCategory, onCategoryChange, loading, density = 'comfortable'
 }) {
   const [expandedId, setExpandedId] = useState(null)
@@ -130,6 +130,8 @@ export default function EmailList({
               className={`p-1.5 rounded hover:bg-dark-hover ${conversationView ? 'text-primary' : 'text-ink-mute'}`}>
               <MessageSquare size={14} />
             </button>
+            <button onClick={onMarkAllRead} title="Đánh dấu tất cả đã đọc (Shift+U)"
+              className="p-1.5 rounded hover:bg-dark-hover text-ink-mute"><CheckCheck size={14} /></button>
             <button onClick={onRefresh} className="p-1.5 rounded hover:bg-dark-hover text-ink-mute"><RefreshCw size={14} /></button>
           </div>
         </div>

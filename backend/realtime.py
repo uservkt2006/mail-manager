@@ -25,7 +25,7 @@ import threading
 
 logger = logging.getLogger(__name__)
 
-POLL_SECONDS = int(os.environ.get("MM_REALTIME_SEC", "8"))
+POLL_SECONDS = int(os.environ.get("MM_REALTIME_SEC", "4"))
 _enabled = os.environ.get("MM_REALTIME", "1") != "0"
 
 _watch = {}            # user_id -> {"stop": Event, "thread": Thread}

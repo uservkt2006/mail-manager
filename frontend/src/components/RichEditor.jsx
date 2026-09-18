@@ -24,17 +24,39 @@ export default function RichEditor({ html, onChange, onPasteFiles, fontFamily = 
   const exec = (cmd, val) => { document.execCommand(cmd, false, val); onChange?.(ref.current?.innerHTML || '') }
 
   const handlePaste = (e) => {
-    const files = []
     const items = e.clipboardData?.items || []
+    const imageFiles = []
+    const otherFiles = []
     for (const it of items) {
       if (it.kind === 'file') {
         const f = it.getAsFile()
-        if (f) files.push(f)
+        if (!f) continue
+        if (f.type.startsWith('image/')) {
+          imageFiles.push(f)
+        } else {
+          otherFiles.push(f)
+        }
       }
     }
-    if (files.length && onPasteFiles) {
-      e.preventDefault()           // screenshots/images -> attachments, Outlook-style
-      onPasteFiles(files)
+    // Image files: insert inline as base64 img (so they appear in the body immediately).
+    // Non-image files: send to attachment list (Outlook behavior).
+    if (imageFiles.length) {
+      e.preventDefault()
+      const imgs = imageFiles.map(f => new Promise(resolve => {
+        const reader = new FileReader()
+        reader.onload = () => resolve(`<img src="${reader.result}" alt="${f.name || 'pasted image'}" style="max-width:100%;height:auto;display:block;margin:6px 0" />`)
+        reader.readAsDataURL(f)
+      }))
+      Promise.all(imgs).then(htmls => {
+        // Insert at cursor in the contenteditable
+        document.execCommand('insertHTML', false, htmls.join(''))
+        onChange?.(ref.current?.innerHTML || '')
+        onPasteFiles?.(imageFiles, /*inline=*/true)
+      })
+    }
+    if (otherFiles.length && onPasteFiles) {
+      e.preventDefault()
+      onPasteFiles(otherFiles, /*inline=*/false)
     }
   }
 

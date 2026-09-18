@@ -279,6 +279,7 @@ export default function MailView({ user, catMeta: catMetaProp, onOpenSettings })
               onContext={async (email, x, y) => { await actSelect(email); setCtx({ email, x, y }) }}
               catMeta={catMeta} density={density}
               onRefresh={() => { loadEmails(); loadTree() }}
+              onMarkAllRead={actReadAll}
               conversationView={conversation} onToggleConversation={() => setConversation(!conversation)}
               searchTerm={search} onSearchChange={setSearch}
               selectedCategory={category} onCategoryChange={setCategory}
