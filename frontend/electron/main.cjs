@@ -291,3 +291,47 @@ ipcMain.on('notify', (_e, { title, body }) => {
     n.show()
   }
 })
+
+// Auto-update: download .deb to a temp dir, then run pkexec dpkg -i
+// Returns { ok, error, debPath } to the renderer
+ipcMain.handle('install-update', async (_e, { downloadUrl, version }) => {
+  try {
+    const os = require('os')
+    const { spawn, exec } = require('child_process')
+    const tmpDir = path.join(os.tmpdir(), 'mail-manager-update')
+    fs.mkdirSync(tmpDir, { recursive: true })
+
+    // Detect platform-specific asset name
+    const arch = process.arch
+    let assetName = downloadUrl.split('/').pop()
+    if (!assetName || !assetName.endsWith('.deb')) {
+      assetName = `mail-manager_${version}_amd64.deb`
+    }
+    const debPath = path.join(tmpDir, assetName)
+
+    // Download via curl (more reliable than Node fetch for large files)
+    await new Promise((resolve, reject) => {
+      const proc = spawn('curl', ['-fL', '-o', debPath, downloadUrl], { stdio: 'ignore' })
+      proc.on('close', code => code === 0 ? resolve() : reject(new Error(`curl exit ${code}`)))
+      proc.on('error', reject)
+    })
+
+    // Verify file exists and has size
+    const sz = fs.statSync(debPath).size
+    if (sz < 1024 * 1024) {
+      throw new Error(`Downloaded file too small (${sz} bytes), likely an error page`)
+    }
+
+    // Try pkexec first (graphical sudo), fall back to plain sudo
+    const helper = ['pkexec', 'dpkg', '-i', debPath]
+    const child = spawn(helper[0], helper.slice(1), {
+      detached: true,
+      stdio: 'ignore'
+    })
+    child.unref()
+
+    return { ok: true, debPath, size: sz }
+  } catch (e) {
+    return { ok: false, error: e.message || String(e) }
+  }
+})
