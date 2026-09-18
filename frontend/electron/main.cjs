@@ -360,11 +360,16 @@ ipcMain.handle('install-update', async (_e, { downloadUrl, version }) => {
     const ourPid = process.pid
     const installCmd = `dpkg -i "${debPath}" || apt-get install -f -y`
     const script = `#!/bin/bash
-# Wait for old mail-manager to exit
-for i in $(seq 1 60); do
-  if ! kill -0 ${ourPid} 2>/dev/null; then break; fi
+# Wait for old mail-manager to exit completely (zombie processes too)
+for i in $(seq 1 90); do
+  if ! pgrep -af "mail-manager|backend/app.py" >/dev/null 2>&1; then break; fi
+  # Force-kill any stragglers
+  pkill -9 -f "/opt/mail-manager" 2>/dev/null || true
+  pkill -9 -f "backend/app.py" 2>/dev/null || true
   sleep 0.5
 done
+# Make sure port 18685 is released
+sleep 1
 # Use pkexec to prompt for password graphically; fall back to sudo if pkexec not available
 if command -v pkexec >/dev/null 2>&1; then
   pkexec bash -c '${installCmd.replace(/'/g, "'\\''")}'
@@ -372,7 +377,7 @@ else
   sudo bash -c '${installCmd.replace(/'/g, "'\\''")}'
 fi
 RC=$?
-# Show result in terminal via notify if possible
+# Show result via notification
 if [ $RC -eq 0 ]; then
   notify-send "TM Mail Manager" "Cập nhật v${version} thành công" 2>/dev/null || true
 else
@@ -390,10 +395,13 @@ exit $RC
     })
     child.unref()
 
-    // Give pkexec a moment to start the prompt, then quit the app
+    // Force-kill mail-manager processes (including zygote/electron/chrome-sandbox)
+    // so dpkg can replace /opt/mail-manager/* without "text file busy" errors.
     setTimeout(() => {
       console.log('Quitting for update...')
-      app.quit()
+      try { execSync('pkill -9 -f "/opt/mail-manager" || true', { stdio: 'ignore' }) } catch {}
+      try { execSync('pkill -9 -f "backend/app.py" || true', { stdio: 'ignore' }) } catch {}
+      setTimeout(() => app.quit(), 200)
     }, 800)
 
     return { ok: true, debPath, size: sz, willRestart: true }

@@ -94,7 +94,9 @@ def current_user_q(x_auth_token: str = Header(default=None), token: str = "") ->
     return current_user(x_auth_token or token or None)
 
 
-# ─── db ───────────────────────────────────────────────────────────────
+# ─── db ────────────────────────────────────────────────────────────────
+os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+
 @contextmanager
 def get_db():
     conn = sqlite3.connect(DB_PATH, timeout=30)
