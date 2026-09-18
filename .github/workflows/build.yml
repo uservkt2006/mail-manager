@@ -28,9 +28,12 @@ jobs:
 
       - name: Install Python dependencies
         run: |
-          cd backend
-          python -m venv .venv
-          .venv/bin/pip install -r requirements.txt
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements.txt
+          # Also create venv for local testing if needed
+          if [ ! -d backend/.venv ]; then
+            cd backend && python -m venv --without-pip .venv && cd ..
+          fi
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
