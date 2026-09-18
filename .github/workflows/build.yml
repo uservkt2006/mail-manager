@@ -72,6 +72,9 @@ jobs:
 
       - name: Build Linux packages (AppImage + .deb)
         run: |
+          # Clean previous build outputs to avoid bloating app.asar
+          rm -rf frontend/dist/linux-unpacked
+          rm -f frontend/dist/*.deb frontend/dist/*.AppImage frontend/dist/*.exe
           cd frontend
           npx electron-builder --linux AppImage deb --publish never
           cd ..
@@ -145,6 +148,9 @@ jobs:
 
       - name: Build Windows executable
         run: |
+          # Clean previous build outputs
+          rm -rf frontend/dist/win-unpacked
+          rm -f frontend/dist/*.exe frontend/dist/*.AppImage frontend/dist/*.deb
           cd frontend
           npx electron-builder --win nsis --publish never
           cd ..
