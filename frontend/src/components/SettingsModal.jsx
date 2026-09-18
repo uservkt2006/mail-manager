@@ -344,27 +344,33 @@ export default function SettingsModal({ user, section = 'general', onClose, onLo
               </div>
             )}
 
-            {sec === 'sync' && settings && (
-              <div className="space-y-5">
-                <h3 className="text-base font-semibold text-ink-strong">Đồng bộ Exchange</h3>
-                <Toggle label="Tự động đồng bộ" hint={`Mail mới tự xuất hiện sau vài giây (delta sync Exchange); khi bật, kiểm tra thêm lịch & danh bạ mỗi ${settings.sync_interval_min || 5} phút`}
-                  checked={!!settings.autosync} onChange={v => { saveS({ autosync: v }); api.realtimeSet(v).catch(() => {}) }} />
-                {settings.autosync && (
-                  <Row label="Khoảng đồng bộ sâu (phút)" hint="Lịch & danh bạ — mail đã realtime riêng">
-                    <Segment options={[['2', '2'], ['5', '5'], ['10', '10'], ['30', '30']].map(([v, l]) => [Number(v), l])}
-                      value={settings.sync_interval_min || 5} onChange={v => saveS({ sync_interval_min: v })} />
-                  </Row>
-                )}
-                {renderMsg(msg)}
-                <button onClick={doSync} disabled={busy || accounts.length === 0}
-                  className="btn-secondary text-sm w-full py-2 flex items-center justify-center gap-2 disabled:opacity-40">
-                  <RefreshCw size={14} className={busy ? 'animate-spin' : ''} /> Đồng bộ ngay
-                </button>
-                <p className="text-[11px] text-ink-mute leading-relaxed">
-                  Đồng bộ kéo: mail các hộp thư đã dùng (mới nhất trước), lịch 14 ngày tới, danh bạ.
-                  Hành động đọc/đánh dấu/nhãn chỉ áp dụng trên máy bạn — chưa đẩy ngược lên server (v3.3).
-                </p>
-              </div>
+            {sec === 'sync' && (
+              settings ? (
+                <div className="space-y-5">
+                  <h3 className="text-base font-semibold text-ink-strong">Đồng bộ Exchange</h3>
+                  <Toggle label="Tự động đồng bộ" hint={`Mail mới tự xuất hiện sau vài giây (delta sync Exchange); khi bật, kiểm tra thêm lịch & danh bạ mỗi ${settings.sync_interval_min || 5} phút`}
+                    checked={!!settings.autosync} onChange={v => { saveS({ autosync: v }); api.realtimeSet(v).catch(() => {}) }} />
+                  {settings.autosync && (
+                    <Row label="Khoảng đồng bộ sâu (phút)" hint="Lịch & danh bạ — mail đã realtime riêng">
+                      <Segment options={[['2', '2'], ['5', '5'], ['10', '10'], ['30', '30']].map(([v, l]) => [Number(v), l])}
+                        value={settings.sync_interval_min || 5} onChange={v => saveS({ sync_interval_min: v })} />
+                    </Row>
+                  )}
+                  {renderMsg(msg)}
+                  <button onClick={doSync} disabled={busy || accounts.length === 0}
+                    className="btn-secondary text-sm w-full py-2 flex items-center justify-center gap-2 disabled:opacity-40">
+                    <RefreshCw size={14} className={busy ? 'animate-spin' : ''} /> Đồng bộ ngay
+                  </button>
+                  <p className="text-[11px] text-ink-mute leading-relaxed">
+                    Đồng bộ kéo: mail các hộp thư đã dùng (mới nhất trước), lịch 14 ngày tới, danh bạ.
+                    Hành động đọc/đánh dấu/nhãn chỉ áp dụng trên máy bạn — chưa đẩy ngược lại server (v3.3).
+                  </p>
+                </div>
+              ) : (
+                <div className="flex items-center gap-2 text-ink-mute text-sm">
+                  <L2 size={14} className="animate-spin" /> Đang tải cài đặt…
+                </div>
+              )
             )}
 
             {sec === 'archive' && settings && (
