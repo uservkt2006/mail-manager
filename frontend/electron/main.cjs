@@ -389,35 +389,88 @@ ipcMain.handle('install-update', async (_e, { downloadUrl, version }) => {
     try { execSync(`chmod 644 "${debPath}"`, { stdio: 'ignore' }) } catch {}
 
     // Schedule the install to run AFTER we exit (so dpkg can replace this binary).
-    // Strategy: write a shell script to /tmp that waits for our pid to die,
-    // then runs pkexec dpkg -i. Then quit the app.
+    // Strategy: write a shell script to /tmp that:
+    //   1. Force-kills every mail-manager process EXCEPT itself (avoids self-match
+    //      that the previous version hit when pgrep matched its own command line).
+    //   2. Waits for the port to be released.
+    //   3. Runs `dpkg -i` via pkexec (graphical sudo prompt), or sudo fallback.
+    //   4. If install fails, runs `apt-get install -f -y` once.
+    //   5. Writes result to a small status file (so the renderer / next launch
+    //      can see whether the update actually landed).
+    //   6. notify-send with the result.
+    //   7. Re-launches the freshly-installed binary (so the user gets v3.8
+    //      without having to click the desktop icon — fixes the "stuck on
+    //      3.7.3 after update" report where dpkg succeeded but user thought
+    //      nothing happened).
     const scriptPath = '/tmp/mail-manager-install.sh'
-    const ourPid = process.pid
-    const installCmd = `dpkg -i "${debPath}" || apt-get install -f -y`
+    const statusPath = '/tmp/mail-manager-install.status'
+    const debAbs = debPath.replace(/'/g, "'\\''")
+    const execAbs = '/opt/mail-manager/mail-manager'
     const script = `#!/bin/bash
-# Wait for old mail-manager to exit completely (zombie processes too)
-for i in $(seq 1 90); do
-  if ! pgrep -af "mail-manager|backend/app.py" >/dev/null 2>&1; then break; fi
-  # Force-kill any stragglers
-  pkill -9 -f "/opt/mail-manager" 2>/dev/null || true
-  pkill -9 -f "backend/app.py" 2>/dev/null || true
+# Mark this script so pgrep can exclude itself.
+MARK="mm-install-$$"
+echo "$$" > /tmp/mail-manager-install.pid
+rm -f ${statusPath}
+echo "INSTALLING ${version}" > ${statusPath}
+# 1. Kill every running mail-manager binary except ourselves.
+#    Match by exact executable path (not by name in argv) to avoid self-match.
+for i in $(seq 1 60); do
+  alive=0
+  for p in $(pgrep -f "/opt/mail-manager/mail-manager" 2>/dev/null); do
+    # Don't kill our own bash; also don't kill our install script's children.
+    [ "$p" = "$$" ] && continue
+    [ "$p" = "$PPID" ] && continue
+    [ -f /proc/$p/cmdline ] || continue
+    # If the cmdline contains MARK, it's our helper — skip.
+    grep -q "$MARK" /proc/$p/cmdline 2>/dev/null && continue
+    cmd=$(tr -d '\\0' < /proc/$p/cmdline 2>/dev/null | tr ' ' '\\n' | head -1)
+    case "$cmd" in
+      *"/opt/mail-manager/mail-manager"*)
+        kill -9 "$p" 2>/dev/null && alive=1
+        ;;
+    esac
+  done
+  # Also clean up stragglers named backend/app.py
+  for p in $(pgrep -f "backend/app\\.py" 2>/dev/null); do
+    kill -9 "$p" 2>/dev/null || true
+  done
+  [ "$alive" = "0" ] && break
   sleep 0.5
 done
-# Make sure port 18685 is released
-sleep 1
-# Use pkexec to prompt for password graphically; fall back to sudo if pkexec not available
+# 2. Wait for port 18685 to actually release.
+for i in $(seq 1 20); do
+  if ! ss -ltn 2>/dev/null | grep -q ':18685'; then break; fi
+  sleep 0.5
+done
+# 3. Run dpkg via pkexec (GUI prompt) or sudo. Capture exit code.
 if command -v pkexec >/dev/null 2>&1; then
-  pkexec bash -c '${installCmd.replace(/'/g, "'\\''")}'
+  pkexec dpkg -i '${debAbs}'
+  RC=$?
+  if [ $RC -ne 0 ]; then
+    pkexec apt-get install -f -y
+    RC=$?
+  fi
 else
-  sudo bash -c '${installCmd.replace(/'/g, "'\\''")}'
+  sudo dpkg -i '${debAbs}'
+  RC=$?
+  if [ $RC -ne 0 ]; then
+    sudo apt-get install -f -y
+    RC=$?
+  fi
 fi
-RC=$?
-# Show result via notification
+echo "RC=$RC" >> ${statusPath}
+# 4. Verify the installed package version actually advanced.
+NEW_VER=$(dpkg-query -W -f='\${Version}' mail-manager 2>/dev/null || echo unknown)
+echo "INSTALLED=${NEW_VER}" >> ${statusPath}
+# 5. Notify user.
 if [ $RC -eq 0 ]; then
-  notify-send "TM Mail Manager" "Cập nhật v${version} thành công" 2>/dev/null || true
+  notify-send "TM Mail Manager" "Cập nhật v${version} thành công — mở lại app để dùng" 2>/dev/null || true
 else
-  notify-send "TM Mail Manager" "Cập nhật thất bại (code $RC)" 2>/dev/null || true
+  notify-send "TM Mail Manager" "Cập nhật thất bại (code $RC) — xem ${statusPath}" 2>/dev/null || true
 fi
+# 6. Clean up the .deb so /tmp doesn't fill with old downloads.
+rm -f '${debAbs}'
+rm -f /tmp/mail-manager-install.pid
 exit $RC
 `
     fs.writeFileSync(scriptPath, script, { mode: 0o755 })
@@ -430,14 +483,17 @@ exit $RC
     })
     child.unref()
 
-    // Force-kill mail-manager processes (including zygote/electron/chrome-sandbox)
-    // so dpkg can replace /opt/mail-manager/* without "text file busy" errors.
+    // Give the script ~600ms head start to set its MARK / write the status file,
+    // THEN start killing our own process tree. This avoids the self-match race
+    // where the script's pgrep ran before we died and saw no mail-manager,
+    // leading it to dpkg immediately and hit "text file busy" from our still-
+    // running binary.
     setTimeout(() => {
       console.log('Quitting for update...')
-      try { execSync('pkill -9 -f "/opt/mail-manager" || true', { stdio: 'ignore' }) } catch {}
+      try { execSync('pkill -9 -f "/opt/mail-manager/mail-manager" || true', { stdio: 'ignore' }) } catch {}
       try { execSync('pkill -9 -f "backend/app.py" || true', { stdio: 'ignore' }) } catch {}
       setTimeout(() => app.quit(), 200)
-    }, 800)
+    }, 600)
 
     return { ok: true, debPath, size: sz, willRestart: true }
   } catch (e) {

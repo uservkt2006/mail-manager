@@ -1,6 +1,6 @@
 {
   "name": "mail-manager",
-  "version": "3.8.0",
+  "version": "3.8.1",
   "description": "TM Mail Manager - Exchange email client for Ubuntu",
   "main": "electron/main.cjs",
   "author": "Võ Khắc Tâm <vokhactam01@gmail.com>",
