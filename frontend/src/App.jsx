@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react'
 import { api, hasToken, setToken } from './api'
 import Login from './components/Login'
 import SetupWizard from './components/SetupWizard'
+import SponsorModal from './components/SponsorModal'
 import AppRail from './components/AppRail'
 import TopBar from './components/TopBar'
 import StatusBar from './components/StatusBar'
@@ -36,6 +37,7 @@ export default function App() {
   const [ruleModal, setRuleModal] = useState(null)   // {mode:'new'|'edit', rule?}
   const [updateInfo, setUpdateInfo] = useState(null)   // {has_update, latest, current, download_url}
   const [showUpdateDialog, setShowUpdateDialog] = useState(false)
+  const [showSponsor, setShowSponsor] = useState(false)
 
   // folder tree is needed by both MailView and the rules editor
   const refreshFolders = useCallback(() => {
@@ -154,6 +156,37 @@ export default function App() {
     }).catch(() => {})
   }, [user])
 
+  // Sponsor modal: shown once after the very first login (or setup).
+  // Skipped for 7 days after dismiss. Suppressed entirely if the URL deep-link
+  // is opening a single email (?mail=<id>) — user is mid-task, no pitch.
+  useEffect(() => {
+    if (!user) return
+    const params = new URLSearchParams(window.location.search)
+    if (params.get('mail')) return
+    let until = 0
+    try { until = Number(localStorage.getItem('mm_sponsor_dismissed_until') || 0) } catch {}
+    if (until && until > Date.now()) return
+    // Slight delay so the app shell paints first — feels less abrupt
+    const t = setTimeout(() => setShowSponsor(true), 800)
+    return () => clearTimeout(t)
+  }, [user])
+
+  // Honor ?mail=<id> deep link: when a separate "open in new window" instance
+  // boots, focus that email in the list. Fires after login (when user is set).
+  useEffect(() => {
+    if (!user) return
+    const params = new URLSearchParams(window.location.search)
+    const mailId = params.get('mail')
+    if (!mailId) return
+    // Stash on window so MailView's selection effect can pick it up after first render
+    window.__mm_pending_mail_id = mailId
+    // Clean the URL bar so reload doesn't re-trigger
+    const url = new URL(window.location.href); url.searchParams.delete('mail')
+    window.history.replaceState({}, '', url.toString())
+    // Nudge MailView to apply the pending selection
+    window.dispatchEvent(new CustomEvent('mm-select-mail', { detail: mailId }))
+  }, [user])
+
   if (booting) {
     return <div className="h-screen flex items-center justify-center bg-dark-bg text-ink-mute text-sm">Đang tải…</div>
   }
@@ -197,6 +230,7 @@ export default function App() {
           onDismiss={() => setShowUpdateDialog(false)}
         />
       )}
+      {showSponsor && <SponsorModal onClose={() => setShowSponsor(false)} />}
       {ruleModal && (
         <RuleModal
           folders={rulesFolders}

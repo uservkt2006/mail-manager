@@ -92,6 +92,12 @@ export default function RichEditor({ html, onChange, onPasteFiles, fontFamily = 
         ref={ref}
         contentEditable
         suppressContentEditableWarning
+        spellCheck={false}
+        autoCorrect="off"
+        autoCapitalize="off"
+        data-gramm="false"
+        data-gramm_editor="false"
+        data-enable-grammarly="false"
         data-placeholder={placeholder}
         onFocus={() => { focusedRef.current = true }}
         onBlur={() => { focusedRef.current = false; onChange?.(ref.current?.innerHTML || '') }}

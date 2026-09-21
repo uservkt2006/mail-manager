@@ -1,6 +1,6 @@
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { X, Plug, LogOut, ShieldCheck, Loader2, UserPlus, Trash2, SlidersHorizontal,
-  RefreshCw, PenLine, Keyboard, Info, Sun, Moon, MonitorSmartphone, LayoutList, Mail, Archive, FolderOpen, Download, FileText, Reply, HardDrive, AlertCircle, Loader2 as L2, Heart } from 'lucide-react'
+  RefreshCw, PenLine, Keyboard, Info, Sun, Moon, MonitorSmartphone, LayoutList, Mail, Archive, FolderOpen, Download, FileText, Reply, HardDrive, AlertCircle, Loader2 as L2, Heart, Image as ImageIcon, Upload, XCircle, Copy } from 'lucide-react'
 import { api, setToken } from '../api'
 import { getTheme, setTheme, getDensity, setDensity, getReadingPane, setReadingPane,
   getComposeFont, setComposeFont, getComposeSize, setComposeSize } from '../theme'
@@ -433,34 +433,7 @@ export default function SettingsModal({ user, section = 'general', onClose, onLo
             )}
 
             {sec === 'signature' && settings && (
-              <div className="space-y-4">
-                <h3 className="text-base font-semibold text-ink-strong">Chữ ký email</h3>
-                <p className="text-xs text-ink-mute">Tự chèn vào cuối thư khi <b className="text-ink-dim">Gửi</b> (không chèn vào bản nháp). Soạn kiểu HTML: đậm/nghiêng/màu/phông — ảnh dán vào cũng được giữ.</p>
-                <RichEditor html={settings.signature_html || ''}
-                  onChange={h => setSettings({ ...settings, signature_html: h })}
-                  minHeight={130} placeholder={'Trân trọng,\nVõ Khắc Tâm\nFPT Telecom'} />
-                <button onClick={() => {
-                  const tmp = document.createElement('div'); tmp.innerHTML = settings.signature_html || ''
-                  saveS({ signature_html: settings.signature_html || '', signature: tmp.textContent.replace(/\s+/g, ' ').trim() })
-                  setMsg({ ok: true, text: 'Đã lưu chữ ký' })
-                }} className="btn-primary text-sm">Lưu chữ ký</button>
-                <div className="border-t border-dark-border pt-4">
-                  <h4 className="text-sm font-semibold text-ink-strong mb-1">Font mặc định khi soạn/trả lời</h4>
-                  <p className="text-xs text-ink-mute mb-3">Áp dụng cho phần nội dung thư mới, trả lời và chuyển tiếp.</p>
-                  <div className="flex gap-6">
-                    <label className="text-xs text-ink-dim">Phông
-                      <select value={getComposeFont()} onChange={e => setComposeFont(e.target.value)} className={inp + ' mt-1 block'}>
-                        {['Calibri', 'Arial', 'Times New Roman', 'Tahoma', 'Verdana', 'JetBrains Mono'].map(f => <option key={f}>{f}</option>)}
-                      </select>
-                    </label>
-                    <label className="text-xs text-ink-dim">Cỡ chữ
-                      <select value={getComposeSize()} onChange={e => setComposeSize(e.target.value)} className={inp + ' mt-1 block'}>
-                        {['12px', '13px', '14px', '16px', '18px'].map(s => <option key={s}>{s}</option>)}
-                      </select>
-                    </label>
-                  </div>
-                </div>
-              </div>
+              <SignatureSection settings={settings} setSettings={setSettings} saveS={saveS} setMsg={setMsg} />
             )}
 
             {sec === 'shortcuts' && (
@@ -550,6 +523,141 @@ export default function SettingsModal({ user, section = 'general', onClose, onLo
   )
 }
 
+
+function SignatureSection({ settings, setSettings, saveS, setMsg }) {
+  const fileRef = useRef(null)
+  const html = settings.signature_html || ''
+  // count embedded images (cid: refs OR data: URIs)
+  const imgCount = (html.match(/<img\b/gi) || []).length
+  const onUpload = async (files) => {
+    if (!files?.length) return
+    const inserts = []
+    for (const f of files) {
+      if (!f.type.startsWith('image/')) continue
+      const reader = new FileReader()
+      const dataUrl = await new Promise(res => { reader.onload = () => res(reader.result); reader.readAsDataURL(f) })
+      // Size guard: base64 image embedded in every email = bloated DB. Warn if too big
+      const kb = Math.round((dataUrl.length * 3) / 4 / 1024)
+      const safeStyle = `max-width:480px;max-height:200px;display:block;margin:6px 0;border:0`
+      inserts.push({ url: dataUrl, name: f.name || 'image', kb, style: safeStyle })
+    }
+    if (!inserts.length) { setMsg({ ok: false, text: 'Chỉ hỗ trợ file hình ảnh (PNG/JPG/GIF/WebP).' }); return }
+    const imgs = inserts.map(i => `<img src="${i.url}" alt="${i.name.replace(/"/g, '&quot;')}" style="${i.style}" />`).join('<br>')
+    const next = (html ? html + '<br>' : '') + imgs
+    setSettings({ ...settings, signature_html: next })
+    const big = inserts.find(i => i.kb > 200)
+    setMsg({
+      ok: true,
+      text: big
+        ? `Đã chèn ${inserts.length} ảnh (ảnh lớn nhất ${big.kb}KB). Mỗi thư gửi đi sẽ mang ảnh theo — nếu muốn gọn hơn, nén ảnh trước khi upload.`
+        : `Đã chèn ${inserts.length} ảnh vào chữ ký.`
+    })
+  }
+  const stripImages = () => {
+    if (!imgCount) return
+    if (!confirm(`Bỏ tất cả ${imgCount} ảnh trong chữ ký?`)) return
+    const next = html.replace(/<br>\s*<img\b[^>]*>\s*/gi, '').replace(/<img\b[^>]*>/gi, '')
+    setSettings({ ...settings, signature_html: next })
+    setMsg({ ok: true, text: 'Đã gỡ ảnh khỏi chữ ký.' })
+  }
+  const copyHtml = async () => {
+    try { await navigator.clipboard.writeText(html); setMsg({ ok: true, text: 'Đã copy HTML chữ ký.' }) }
+    catch { setMsg({ ok: false, text: 'Không copy được — clipboard bị chặn.' }) }
+  }
+  // suggestion templates (helpful for non-techies)
+  const insertTemplate = (kind) => {
+    const tpl = {
+      card: `<div style="font-family:Calibri,Arial,sans-serif;font-size:13px;color:#1a1a1a">
+  <b style="font-size:15px;color:#0c0e12">Võ Khắc Tâm</b><br>
+  <span style="color:#4c8dff">Đội trưởng — FPT Telecom</span><br>
+  <span style="color:#666">📞 0xxx xxx xxx · ✉️ tamvk@fpt.net</span><br>
+  <a href="https://tmtool.click" style="color:#4c8dff;text-decoration:none">🌐 tmtool.click</a>
+</div>`,
+      minimal: `<div style="font-family:Calibri,Arial,sans-serif;font-size:13px;color:#333">
+  Trân trọng,<br><b>Võ Khắc Tâm</b><br>
+  <span style="color:#888">FPT Telecom</span>
+</div>`,
+    }[kind]
+    if (!tpl) return
+    const next = (html ? html + '<br><br>' : '') + tpl
+    setSettings({ ...settings, signature_html: next })
+  }
+  return (
+    <div className="space-y-4">
+      <h3 className="text-base font-semibold text-ink-strong">Chữ ký email</h3>
+      <p className="text-xs text-ink-mute leading-relaxed">
+        Tự chèn khi <b className="text-ink-dim">Gửi</b> (không chèn vào bản nháp). Soạn HTML: đậm/nghiêng/màu/phông,
+        dán ảnh (Ctrl+V) hoặc upload card visit bên dưới.
+      </p>
+
+      {/* Quick templates */}
+      <div className="flex items-center gap-2 flex-wrap">
+        <span className="text-[11px] text-ink-mute uppercase tracking-wider">Mẫu:</span>
+        <button onClick={() => insertTemplate('card')} className="btn-secondary text-[11px] py-1 px-2.5 flex items-center gap-1">
+          <ImageIcon size={11} /> Card visit
+        </button>
+        <button onClick={() => insertTemplate('minimal')} className="btn-secondary text-[11px] py-1 px-2.5">
+          Tối giản
+        </button>
+        <span className="flex-1" />
+        <button onClick={copyHtml} disabled={!html} className="text-[11px] text-ink-dim hover:text-ink flex items-center gap-1 disabled:opacity-30">
+          <Copy size={11} /> Copy HTML
+        </button>
+      </div>
+
+      <RichEditor html={html}
+        onChange={h => setSettings({ ...settings, signature_html: h })}
+        minHeight={140} placeholder={'Trân trọng,\nVõ Khắc Tâm\nFPT Telecom'} />
+
+      {/* Upload zone for signature image / business card */}
+      <div className="bg-dark-bg border border-dashed border-dark-border rounded-lg p-3">
+        <div className="flex items-center gap-3">
+          <button onClick={() => fileRef.current?.click()} className="btn-secondary text-xs flex items-center gap-1.5 py-1.5">
+            <Upload size={12} /> Thêm ảnh / card visit
+          </button>
+          <span className="text-[11px] text-ink-mute">
+            PNG/JPG/GIF/WebP. Dán trực tiếp (Ctrl+V) cũng được.
+          </span>
+          <span className="flex-1" />
+          {imgCount > 0 && (
+            <button onClick={stripImages} className="text-[11px] text-red-400 hover:text-red-300 flex items-center gap-1">
+              <XCircle size={11} /> Gỡ ảnh ({imgCount})
+            </button>
+          )}
+        </div>
+        <input ref={fileRef} type="file" accept="image/*" multiple className="hidden"
+          onChange={e => { onUpload([...e.target.files]); e.target.value = '' }} />
+        <p className="text-[11px] text-ink-mute mt-2 leading-relaxed">
+          Ảnh được nhúng base64 vào HTML — gửi được luôn nhưng mỗi thư sẽ nặng thêm cỡ dung lượng ảnh.
+          Nếu dùng card visit, ưu tiên ảnh dưới 200KB.
+        </p>
+      </div>
+
+      <button onClick={() => {
+        const tmp = document.createElement('div'); tmp.innerHTML = html
+        saveS({ signature_html: html, signature: tmp.textContent.replace(/\s+/g, ' ').trim() })
+        setMsg({ ok: true, text: 'Đã lưu chữ ký' })
+      }} className="btn-primary text-sm">Lưu chữ ký</button>
+
+      <div className="border-t border-dark-border pt-4">
+        <h4 className="text-sm font-semibold text-ink-strong mb-1">Font mặc định khi soạn/trả lời</h4>
+        <p className="text-xs text-ink-mute mb-3">Áp dụng cho phần nội dung thư mới, trả lời và chuyển tiếp.</p>
+        <div className="flex gap-6">
+          <label className="text-xs text-ink-dim">Phông
+            <select value={getComposeFont()} onChange={e => setComposeFont(e.target.value)} className={inp + ' mt-1 block'}>
+              {['Calibri', 'Arial', 'Times New Roman', 'Tahoma', 'Verdana', 'JetBrains Mono'].map(f => <option key={f}>{f}</option>)}
+            </select>
+          </label>
+          <label className="text-xs text-ink-dim">Cỡ chữ
+            <select value={getComposeSize()} onChange={e => setComposeSize(e.target.value)} className={inp + ' mt-1 block'}>
+              {['12px', '13px', '14px', '16px', '18px'].map(s => <option key={s}>{s}</option>)}
+            </select>
+          </label>
+        </div>
+      </div>
+    </div>
+  )
+}
 
 function ArchiveDialog({ folders, onClose, onMsg }) {
   const [selectedFolders, setSelectedFolders] = useState([])

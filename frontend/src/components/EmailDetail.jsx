@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react'
-import { Archive, Trash2, Star, Reply, ReplyAll, Forward, Flag, CheckSquare, Paperclip, Tags, ChevronDown, Download } from 'lucide-react'
+import { Archive, Trash2, Star, Reply, ReplyAll, Forward, Flag, CheckSquare, Paperclip, Tags, ChevronDown, Download, ExternalLink } from 'lucide-react'
 import DOMPurify from 'dompurify'
 import MailBody from './MailBody'
 import ImageLightbox from './ImageLightbox'
@@ -114,6 +114,16 @@ export default function EmailDetail({ email, folders, onArchive, onDelete, onSta
           <Tags size={13} /> Phân loại
         </button>
         <div className="flex-1" />
+        <button onClick={() => {
+          // Desktop (Electron): pop into a separate native window. Browser fallback: open in new tab.
+          if (window.electron?.openMailWindow) {
+            window.electron.openMailWindow(email.id, m.subject || 'Mail')
+          } else {
+            window.open(`/?mail=${encodeURIComponent(email.id)}`, '_blank', 'noopener,width=900,height=720')
+          }
+        }} className="p-1.5 rounded hover:bg-dark-hover" title="Mở trong cửa sổ riêng">
+          <ExternalLink size={14} className="text-ink-dim" />
+        </button>
         <button onClick={() => onStar(email.id)} className="p-1.5 rounded hover:bg-dark-hover">
           <Star size={15} className={email.starred ? 'text-yellow-400 fill-current' : 'text-ink-dim'} />
         </button>

@@ -170,6 +170,28 @@ export default function MailView({ user, catMeta: catMetaProp, onOpenSettings })
   const actReadAll = async () => { const r = await api.readAll(activeFolder.id); showToast(`Đã đánh dấu ${r.marked} thư là đã đọc`); loadEmails(); loadTree() }
   const actTask = async () => { if (selected) { await api.emailToTask(selected.id); showToast('Đã tạo việc từ email — xem tab To Do') } }
 
+  // Deep-link: ?mail=<id> opens this email in its own window
+  useEffect(() => {
+    const onSelectMail = async (e) => {
+      const id = e.detail || window.__mm_pending_mail_id
+      if (!id) return
+      window.__mm_pending_mail_id = null
+      try {
+        const full = await api.email(id)
+        const target = full.email || full
+        setSelected({ ...target, folder_id: target.folder_id ?? full.folder_id })
+        // Make sure the folder containing this mail is active so the list shows it
+        if (target.folder_id && (!activeFolder || String(activeFolder.id) !== String(target.folder_id))) {
+          // try to find folder in tree
+          const found = (tree || []).flatMap(function flat(n) { return [n, ...(n.children || []).flatMap(flat)] }).find(f => f.id === target.folder_id)
+          if (found) setActiveFolder(found)
+        }
+      } catch (err) { showToast('Không mở được thư: ' + err.message) }
+    }
+    window.addEventListener('mm-select-mail', onSelectMail)
+    return () => window.removeEventListener('mm-select-mail', onSelectMail)
+  }, [tree, activeFolder])
+
   const openSearchFolder = (sf) => { setActiveFolder({ id: sf.id, name: sf.name, unread: 0 }); setSelected(null) }
   const deleteSearchFolder = async (id) => {
     await api.deleteSearchFolder(id)

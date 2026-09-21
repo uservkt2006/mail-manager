@@ -304,6 +304,41 @@ ipcMain.on('window-maximize', () => {
 })
 ipcMain.on('window-close', () => mainWindow && mainWindow.close())
 
+// Open a single email in a separate Electron window (Outlook-style "open in new window").
+// Renderer passes the email id + subject (for window title); we load the SPA at /?mail=<id>
+// so the new window has full app context (sidebar, actions) instead of a stripped-down reader.
+let detailWindows = new Set()
+ipcMain.handle('open-mail-window', async (_e, { mailId, subject }) => {
+  if (!app.isPackaged && process.env.FRONTEND_URL) {
+    const url = `${process.env.FRONTEND_URL}/?mail=${encodeURIComponent(mailId)}`
+    const w = new BrowserWindow({
+      width: 900, height: 720, minWidth: 600, minHeight: 400,
+      backgroundColor: '#0c0e12',
+      title: subject || 'Mail',
+      autoHideMenuBar: true,
+      webPreferences: { nodeIntegration: false, contextIsolation: true, preload: path.join(__dirname, 'preload.cjs') }
+    })
+    detailWindows.add(w)
+    w.on('closed', () => detailWindows.delete(w))
+    await w.loadURL(url)
+    return { ok: true }
+  }
+  // Packaged: load via the proxy port (5174)
+  const port = process.env.FRONTEND_PORT || 5174
+  const url = `http://127.0.0.1:${port}/?mail=${encodeURIComponent(mailId)}`
+  const w = new BrowserWindow({
+    width: 900, height: 720, minWidth: 600, minHeight: 400,
+    backgroundColor: '#0c0e12',
+    title: subject || 'Mail',
+    autoHideMenuBar: true,
+    webPreferences: { nodeIntegration: false, contextIsolation: true, preload: path.join(__dirname, 'preload.cjs') }
+  })
+  detailWindows.add(w)
+  w.on('closed', () => detailWindows.delete(w))
+  await w.loadURL(url)
+  return { ok: true }
+})
+
 ipcMain.handle('pick-folder', async () => {
   const r = await dialog.showOpenDialog(mainWindow, {
     title: 'Chọn thư mục lưu trữ',

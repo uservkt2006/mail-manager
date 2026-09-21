@@ -1,6 +1,6 @@
 {
   "name": "mail-manager",
-  "version": "3.7.0",
+  "version": "3.8.0",
   "description": "TM Mail Manager - Exchange email client for Ubuntu",
   "main": "electron/main.cjs",
   "author": "Võ Khắc Tâm <vokhactam01@gmail.com>",
@@ -27,6 +27,7 @@
     "date-fns": "^2.30.0",
     "dompurify": "^3.4.15",
     "lucide-react": "^0.294.0",
+    "qrcode": "^1.5.4",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "react-resizable-panels": "^4.12.4"
@@ -43,12 +44,16 @@
       {
         "from": "../build/frontend-dist",
         "to": "frontend",
-        "filter": ["**/*"]
+        "filter": [
+          "**/*"
+        ]
       },
       {
         "from": "../build/icons",
         "to": "icons",
-        "filter": ["**/*"]
+        "filter": [
+          "**/*"
+        ]
       },
       {
         "from": "../build/icon.png",
@@ -61,28 +66,38 @@
       {
         "from": "../frontend/_backend",
         "to": "backend",
-        "filter": ["**/*"]
+        "filter": [
+          "**/*"
+        ]
       },
       {
         "from": "../build/python-embed-amd64",
         "to": "python-win",
-        "filter": ["**/*"]
+        "filter": [
+          "**/*"
+        ]
       },
       {
         "from": "../build/python-linux-x64",
         "to": "python-linux",
-        "filter": ["**/*"]
+        "filter": [
+          "**/*"
+        ]
       }
     ],
     "linux": {
       "target": [
         {
           "target": "AppImage",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         },
         {
           "target": "deb",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         }
       ],
       "category": "Office",
@@ -99,13 +114,17 @@
     },
     "deb": {
       "packageName": "mail-manager",
-      "fpm": ["--deb-no-default-config-files"]
+      "fpm": [
+        "--deb-no-default-config-files"
+      ]
     },
     "win": {
       "target": [
         {
           "target": "nsis",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         }
       ],
       "icon": "../build/icon.ico"
